@@ -8,6 +8,9 @@ from contextlib import redirect_stderr, redirect_stdout
 import sys
 from pathlib import Path
 from typing import Any
+from loguru import logger
+import re
+from datetime import datetime
 
 
 RUNTIME_SENTINEL_US = 1_000_000_000.0
@@ -104,7 +107,8 @@ def _write_debug_log(
 
     program_id = _extract_program_id(payload) or "unknown_program"
     code_hash = hashlib.sha1(custom_model_src.encode("utf-8", errors="ignore")).hexdigest()[:10]
-    out_path = out_dir / f"{program_id}_{code_hash}.log"
+    formatted_time = datetime.now().strftime("%Y%m%d_%H%M%S")
+    out_path = out_dir / f"{program_id}_{code_hash}_{formatted_time}.log"
 
     # Avoid gigantic files by default.
     max_code_chars = int(cfg.get("validator_debug_max_code_chars", 50_000))
@@ -157,6 +161,116 @@ def _write_debug_log(
     out_path.write_text("\n".join(lines), encoding="utf-8")
 
 
+def run_local_validation(
+    problem_dir: Path,
+    cfg: dict[str, Any],
+    payload: Any,
+    custom_model_src: str,
+    ref_arch_src: str,
+) -> dict[str, float]:
+    import torch
+    from kernelbench.eval import eval_kernel_against_ref, get_torch_dtype_from_string
+
+    if not torch.cuda.is_available():
+        raise ValueError("CUDA is not available")
+
+    backend = str(cfg.get("backend", "cuda"))
+    precision_str = str(cfg.get("precision", "fp32"))
+    timing_method = str(cfg.get("timing_method", "cuda_event"))
+    num_correct_trials = int(cfg.get("num_correct_trials", 5))
+    num_perf_trials = int(cfg.get("num_perf_trials", 100))
+    output_rtol = cfg.get("output_rtol")
+    output_atol = cfg.get("output_atol")
+    if not isinstance(output_rtol, (int, float)):
+        output_rtol = None
+    if not isinstance(output_atol, (int, float)):
+        output_atol = None
+
+    captured_buf = io.StringIO()
+    result = None
+    exc: BaseException | None = None
+    try:
+        with redirect_stdout(captured_buf), redirect_stderr(captured_buf):
+            precision = get_torch_dtype_from_string(precision_str)
+            result = eval_kernel_against_ref(
+                ref_arch_src,
+                custom_model_src,
+                verbose=bool(cfg.get("validator_debug", False)),
+                measure_performance=True,
+                timing_method=timing_method,
+                num_correct_trials=num_correct_trials,
+                num_perf_trials=num_perf_trials,
+                backend=backend,
+                precision=precision,
+                output_rtol=output_rtol,
+                output_atol=output_atol,
+                device=torch.device("cuda:7"),
+            )
+            if not result.compiled:
+                logger.error(f"[TRACEDEB_USER] Compilation error: {result.metadata}")
+                raise result.metadata["compilation_error"]
+
+            if not result.correctness:
+                logger.error(f"[TRACEDEB_USER] Runtime error: {result.metadata}")
+                if "runtime_error" in result.metadata or "runtime_error_traceback" in result.metadata:
+                    raise Exception(f"Runtime error: {result.metadata}")
+
+    except BaseException as e:
+        exc = e
+    finally:
+        captured = captured_buf.getvalue()
+
+    if exc is not None:
+        _write_debug_log(
+            problem_dir=problem_dir,
+            cfg=cfg,
+            payload=payload,
+            custom_model_src=custom_model_src,
+            result=result,
+            captured=captured,
+            exc=exc,
+        )
+        raise exc
+
+    compiled = 1.0 if bool(result.compiled) else 0.0
+    correctness = 1.0 if bool(result.correctness) else 0.0
+
+    runtime_us = (
+        float(result.runtime) if (result.runtime is not None and float(result.runtime) > 0) else -1.0
+    )
+    ref_runtime_us = (
+        float(result.ref_runtime)
+        if (result.ref_runtime is not None and float(result.ref_runtime) > 0)
+        else -1.0
+    )
+
+    if compiled and correctness and runtime_us > 0 and ref_runtime_us > 0:
+        speedup = ref_runtime_us / runtime_us
+        is_valid = 1.0
+    else:
+        speedup = 0.0
+        is_valid = 0.0
+
+    _write_debug_log(
+        problem_dir=problem_dir,
+        cfg=cfg,
+        payload=payload,
+        custom_model_src=custom_model_src,
+        result=result,
+        captured=captured,
+        exc=None,
+    )
+
+    return {
+        "speedup": float(speedup),
+        "runtime_us": float(runtime_us if runtime_us > 0 else RUNTIME_SENTINEL_US),
+        "ref_runtime_us": float(ref_runtime_us if ref_runtime_us > 0 else RUNTIME_SENTINEL_US),
+        "compiled": float(compiled),
+        "correctness": float(correctness),
+        "is_valid": float(is_valid),
+    }
+
+
 def validate(*args: Any) -> dict[str, float]:
     """
     GigaEvo validator.
@@ -181,34 +295,51 @@ def validate(*args: Any) -> dict[str, float]:
     try:
         custom_model_src = _extract_custom_model_src(payload)
     except Exception:
-        return {
-            "speedup": 0.0,
-            "runtime_us": RUNTIME_SENTINEL_US,
-            "ref_runtime_us": RUNTIME_SENTINEL_US,
-            "compiled": 0.0,
-            "correctness": 0.0,
-            "is_valid": 0.0,
-        }
+        # return {
+        #     "speedup": 0.0,
+        #     "runtime_us": RUNTIME_SENTINEL_US,
+        #     "ref_runtime_us": RUNTIME_SENTINEL_US,
+        #     "compiled": 0.0,
+        #     "correctness": 0.0,
+        #     "is_valid": 0.0,
+        # }
+        raise
 
     if not custom_model_src.strip():
-        return {
-            "speedup": 0.0,
-            "runtime_us": RUNTIME_SENTINEL_US,
-            "ref_runtime_us": RUNTIME_SENTINEL_US,
-            "compiled": 0.0,
-            "correctness": 0.0,
-            "is_valid": 0.0,
-        }
+        raise ValueError("Custom model source code is empty")
 
-    # Runtime config: expected to come from `context.py` (run_config.json).
-    # This keeps evolving programs free of env reads and os/sys imports.
     cfg: dict[str, Any] = context if isinstance(context, dict) else {}
-    backend = str(cfg.get("backend", "cuda"))
-    codegen_kind = str(cfg.get("codegen_kind", "python")).lower()
-    precision_str = str(cfg.get("precision", "fp32"))
-    timing_method = str(cfg.get("timing_method", "cuda_event"))
-    num_correct_trials = int(cfg.get("num_correct_trials", 5))
-    num_perf_trials = int(cfg.get("num_perf_trials", 100))
+    execution_mode = cfg.get("execution_mode", "local_execution")
+
+    if execution_mode == "remote_execution":
+        import time
+        import requests
+
+        server_url = cfg.get("remote_validator_url", "http://localhost:8000")
+        
+        # 1. Schedule
+        resp = requests.post(
+            f"{server_url}/schedule_validate",
+            json={
+                "cfg": cfg,
+                "payload": payload,
+            }
+        )
+        resp.raise_for_status()
+        job = resp.json()
+        job_id = job["job_id"]
+
+        # 2. Fetch with polling
+        while True:
+            resp = requests.get(f"{server_url}/fetch_validate_results", params={"job_id": job_id})
+            resp.raise_for_status()
+            data = resp.json()
+            if data["status"] == "completed":
+                return data["result"]
+            elif data["status"] == "failed":
+                raise Exception(data.get("error_msg"))
+            
+            time.sleep(cfg.get("remote_poll_interval", 1.0))
 
     # Reference model source code should be provided in context (preferred).
     ref_arch_src: str | None = None
@@ -216,157 +347,13 @@ def validate(*args: Any) -> dict[str, float]:
     if isinstance(v, str):
         ref_arch_src = v
 
-    try:
-        if codegen_kind == "cpp":
-            # Placeholder path: treat program payload as "kernel generator" python code.
-            # We execute it to locate `generate_kernel(...)`, but compilation/bindings are not wired yet.
-            try:
-                ns: dict[str, Any] = {}
-                exec(custom_model_src, ns)  # noqa: S102 (validator-owned execution)
-                gen = ns.get("generate_kernel")
-                if callable(gen):
-                    _ = gen(cfg)
-                from scripts.cpp_backend_utils import raise_bindings_not_implemented
+    if ref_arch_src is None:
+        raise ValueError("No reference model source code provided")
 
-                raise_bindings_not_implemented(backend=backend)
-            except NotImplementedError:
-                _write_debug_log(
-                    problem_dir=problem_dir,
-                    cfg=cfg,
-                    payload=payload,
-                    custom_model_src=custom_model_src,
-                    result=None,
-                    captured="",
-                    exc=NotImplementedError("C++ backend path not implemented"),
-                )
-                return {
-                    "speedup": 0.0,
-                    "runtime_us": RUNTIME_SENTINEL_US,
-                    "ref_runtime_us": RUNTIME_SENTINEL_US,
-                    "compiled": 0.0,
-                    "correctness": 0.0,
-                    "is_valid": 0.0,
-                }
+    codegen_kind = str(cfg.get("codegen_kind", "python")).lower()
+    if codegen_kind == "cpp":
+        raise Exception("C++ validation is not supported for now")
 
-        import torch
+    return run_local_validation(problem_dir, cfg, payload, custom_model_src, ref_arch_src)
 
-        from kernelbench.eval import eval_kernel_against_ref, get_torch_dtype_from_string
-
-        if not torch.cuda.is_available():
-            return {
-                "speedup": 0.0,
-                "runtime_us": RUNTIME_SENTINEL_US,
-                "ref_runtime_us": RUNTIME_SENTINEL_US,
-                "compiled": 0.0,
-                "correctness": 0.0,
-                "is_valid": 0.0,
-            }
-
-        if ref_arch_src is None:
-            # Without ref code we cannot evaluate correctness/perf.
-            return {
-                "speedup": 0.0,
-                "runtime_us": RUNTIME_SENTINEL_US,
-                "ref_runtime_us": RUNTIME_SENTINEL_US,
-                "compiled": 0.0,
-                "correctness": 0.0,
-                "is_valid": 0.0,
-            }
-
-        captured_buf = io.StringIO()
-        result = None
-        exc: BaseException | None = None
-        try:
-            with redirect_stdout(captured_buf), redirect_stderr(captured_buf):
-                result = eval_kernel_against_ref(
-                    ref_arch_src,
-                    custom_model_src,
-                    verbose=bool(cfg.get("validator_debug", False)),
-                    measure_performance=True,
-                    timing_method=timing_method,
-                    num_correct_trials=num_correct_trials,
-                    num_perf_trials=num_perf_trials,
-                    backend=backend,
-                    precision=get_torch_dtype_from_string(precision_str),
-                )
-        except BaseException as e:  # keep validator resilient
-            exc = e
-        finally:
-            captured = captured_buf.getvalue()
-
-        if exc is not None:
-            _write_debug_log(
-                problem_dir=problem_dir,
-                cfg=cfg,
-                payload=payload,
-                custom_model_src=custom_model_src,
-                result=result,
-                captured=captured,
-                exc=exc,
-            )
-            return {
-                "speedup": 0.0,
-                "runtime_us": RUNTIME_SENTINEL_US,
-                "ref_runtime_us": RUNTIME_SENTINEL_US,
-                "compiled": 0.0,
-                "correctness": 0.0,
-                "is_valid": 0.0,
-            }
-
-        compiled = 1.0 if bool(result.compiled) else 0.0
-        correctness = 1.0 if bool(result.correctness) else 0.0
-
-        runtime_us = (
-            float(result.runtime) if (result.runtime is not None and float(result.runtime) > 0) else -1.0
-        )
-        ref_runtime_us = (
-            float(result.ref_runtime)
-            if (result.ref_runtime is not None and float(result.ref_runtime) > 0)
-            else -1.0
-        )
-
-        if compiled and correctness and runtime_us > 0 and ref_runtime_us > 0:
-            speedup = ref_runtime_us / runtime_us
-            is_valid = 1.0
-        else:
-            speedup = 0.0
-            is_valid = 0.0
-
-        _write_debug_log(
-            problem_dir=problem_dir,
-            cfg=cfg,
-            payload=payload,
-            custom_model_src=custom_model_src,
-            result=result,
-            captured=captured,
-            exc=None,
-        )
-
-        return {
-            "speedup": float(speedup),
-            "runtime_us": float(runtime_us if runtime_us > 0 else RUNTIME_SENTINEL_US),
-            "ref_runtime_us": float(ref_runtime_us if ref_runtime_us > 0 else RUNTIME_SENTINEL_US),
-            "compiled": float(compiled),
-            "correctness": float(correctness),
-            "is_valid": float(is_valid),
-        }
-    except Exception:
-        # Keep validator resilient: any exception => invalid w/ sentinels
-        _write_debug_log(
-            problem_dir=problem_dir,
-            cfg=cfg,
-            payload=payload,
-            custom_model_src=custom_model_src,
-            result=None,
-            captured="",
-            exc=Exception("validate() outer exception; see upstream logs"),
-        )
-        return {
-            "speedup": 0.0,
-            "runtime_us": RUNTIME_SENTINEL_US,
-            "ref_runtime_us": RUNTIME_SENTINEL_US,
-            "compiled": 0.0,
-            "correctness": 0.0,
-            "is_valid": 0.0,
-        }
 
