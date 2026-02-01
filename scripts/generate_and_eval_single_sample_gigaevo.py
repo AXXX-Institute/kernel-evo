@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import socket
 import subprocess
 import sys
 import time
@@ -15,6 +16,21 @@ def _add_kernelbench_to_sys_path(problem_dir: Path) -> None:
         s = str(kb_src)
         if s not in sys.path:
             sys.path.insert(0, s)
+
+
+class Tee:
+    def __init__(self, *streams):
+        self.streams = streams
+
+    def write(self, data):
+        for s in self.streams:
+            s.write(data)
+        # optional: flush so output appears immediately
+        self.flush()
+
+    def flush(self):
+        for s in self.streams:
+            s.flush()
 
 
 def _write_initial_seed(problem_dir: Path, *, program_code: str, note: str) -> None:
@@ -40,11 +56,19 @@ def main() -> None:
         )
     )
 
-    # KernelBench problem selection
+    # Problem selection
+    # - KernelBench: use (--level, --problem-id)
+    # - Custom: use --problem-path pointing at a KernelBench-style `task.py`
     p.add_argument("--dataset-src", default="huggingface", choices=["huggingface", "local"])
     p.add_argument("--dataset-name", default="ScalingIntelligence/KernelBench")
-    p.add_argument("--level", type=int, required=True)
-    p.add_argument("--problem-id", type=int, required=True)
+    p.add_argument("--level", type=int, default=None)
+    p.add_argument("--problem-id", type=int, default=None)
+    p.add_argument(
+        "--problem-path",
+        default="",
+        help="Optional: path to a custom problem file or a directory containing `task.py` (bypasses KernelBench dataset loading).",
+    )
+    p.add_argument("--experiment-name", required=True, help="Name used for saving the experiment results.")
 
     # KernelBench evaluation settings (passed to validator via context.py/run_config.json)
     p.add_argument(
@@ -62,6 +86,22 @@ def main() -> None:
     p.add_argument("--timing-method", default="cuda_event")
     p.add_argument("--num-correct-trials", type=int, default=5)
     p.add_argument("--num-perf-trials", type=int, default=100)
+    p.add_argument(
+        "--output-rtol",
+        type=float,
+        default=None,
+        help=(
+            "Relative tolerance for output correctness checks. If unset, KernelBench defaults based on precision."
+        ),
+    )
+    p.add_argument(
+        "--output-atol",
+        type=float,
+        default=None,
+        help=(
+            "Absolute tolerance for output correctness checks. If unset, KernelBench defaults based on precision."
+        ),
+    )
 
     # GigaEvo / infra
     p.add_argument(
@@ -80,14 +120,34 @@ def main() -> None:
     p.add_argument("--validator-debug", action="store_true", help="Enable validator debug logs (writes to kernel_generation/validator_debug/ by default).")
     p.add_argument("--validator-debug-dir", default="", help="Optional directory for validator debug logs.")
     p.add_argument("--validator-debug-max-code-chars", type=int, default=50000, help="Max number of code characters to write into each validator debug log.")
+    p.add_argument("--stdout-dir", default="", help="Optional directory to store stdout/stderr logs.")
+
+    # Execution controls
+    p.add_argument(
+        "--execution-mode",
+        default="local_execution",
+        choices=["local_execution", "remote_execution"],
+        help="Whether to run validation locally or on a remote server.",
+    )
+    p.add_argument(
+        "--remote-validator-url",
+        default="http://localhost:15000",
+        help="URL of the remote validation server (used if execution-mode is remote_execution).",
+    )
+    p.add_argument(
+        "--remote-poll-interval",
+        type=float,
+        default=1.0,
+        help="Polling interval in seconds for remote execution.",
+    )
 
     # LLM config (LangChain ChatOpenAI in gigaevo uses OPENAI_API_KEY + base_url)
     p.add_argument("--llm-base-url", default="https://openrouter.ai/api/v1")
     p.add_argument("--model-name", required=True)
     p.add_argument("--temperature", type=float, default=0.0)
-    p.add_argument("--max-tokens", type=int, default=8192)
+    p.add_argument("--max-tokens", type=int, default=100000)
     p.add_argument("--llm-log-dir", default="", help="If set, start a local proxy that logs all LLM prompts/responses to this directory.")
-    p.add_argument("--llm-log-port", type=int, default=8801, help="Port for the local LLM logging proxy.")
+    p.add_argument("--llm-log-port", type=int, default=None, help="Port for the local LLM logging proxy.")
     p.add_argument(
         "--disable-insights-lineage",
         action="store_true",
@@ -115,17 +175,37 @@ def main() -> None:
     if not (problem_dir / "initial_programs").exists():
         raise FileNotFoundError(f"Missing {problem_dir}/initial_programs/")
 
-    # Load reference architecture source from KernelBench
-    _add_kernelbench_to_sys_path(problem_dir)
-    from kernelbench.dataset import construct_kernelbench_dataset
+    def _resolve_problem_file(problem_path: str) -> Path:
+        pp = Path(problem_path).expanduser().resolve()
+        if pp.is_dir():
+            candidate = pp / "task.py"
+            if candidate.exists():
+                return candidate
+            raise FileNotFoundError(f"Custom problem dir must contain task.py: {pp}")
+        if not pp.exists():
+            raise FileNotFoundError(f"Custom problem file not found: {pp}")
+        return pp
 
-    ds = construct_kernelbench_dataset(
-        level=args.level,
-        source=args.dataset_src,
-        dataset_name=args.dataset_name,
-    )
-    kb_problem = ds.get_problem_by_id(args.problem_id)
-    ref_arch_src = kb_problem.code
+    # Load reference architecture source
+    if str(args.problem_path).strip():
+        problem_file = _resolve_problem_file(str(args.problem_path))
+        ref_arch_src = problem_file.read_text(encoding="utf-8")
+        problem_kind = "custom"
+    else:
+        if args.level is None or args.problem_id is None:
+            raise SystemExit("Must provide either --problem-path OR both --level and --problem-id.")
+
+        _add_kernelbench_to_sys_path(problem_dir)
+        from kernelbench.dataset import construct_kernelbench_dataset  # type: ignore[import-not-found]
+
+        ds = construct_kernelbench_dataset(
+            level=args.level,
+            source=args.dataset_src,
+            dataset_name=args.dataset_name,
+        )
+        kb_problem = ds.get_problem_by_id(args.problem_id)
+        ref_arch_src = kb_problem.code
+        problem_kind = "kernelbench"
 
     task_path = problem_dir / "task_description.txt"
     from cpp_backend_utils import is_cpp_backend as _is_cpp_backend
@@ -145,24 +225,45 @@ def main() -> None:
             # Allow forcing, but keep a gentle safeguard for obvious mismatches.
             pass
 
+    formatted_time = time.strftime("%Y%m%d_%H%M%S")
+    if args.problem_path:
+        problem_name = f"{args.experiment_name}_{formatted_time}"
+    else:
+        problem_name = f"kernelbench_{args.level}_{args.problem_id}_{formatted_time}"
+
+    if str(args.stdout_dir).strip():
+        stdout_dir = Path(args.stdout_dir).expanduser().resolve()
+        stdout_dir.mkdir(parents=True, exist_ok=True)
+        log_file_path = stdout_dir / f"{problem_name}.txt"
+        f = open(log_file_path, "a", buffering=1, encoding="utf-8")
+        sys.stdout = Tee(sys.__stdout__, f)
+        sys.stderr = Tee(sys.__stderr__, f)
+
     # Write run config used by context.py + validate.py (no env vars needed)
     run_cfg = {
         "dataset_src": str(args.dataset_src),
         "dataset_name": str(args.dataset_name),
-        "level": int(args.level),
-        "problem_id": int(args.problem_id),
+        "level": int(args.level) if args.level is not None else 0,
+        "problem_id": int(args.problem_id) if args.problem_id is not None else 0,
+        "problem_kind": problem_kind,
+        "problem_path": str(args.problem_path) if str(args.problem_path).strip() else "",
         "backend": str(args.backend),
         "codegen_kind": str(codegen_kind),
         "precision": str(args.precision),
         "timing_method": str(args.timing_method),
         "num_correct_trials": int(args.num_correct_trials),
         "num_perf_trials": int(args.num_perf_trials),
+        "output_rtol": (float(args.output_rtol) if args.output_rtol is not None else None),
+        "output_atol": (float(args.output_atol) if args.output_atol is not None else None),
         "ref_arch_src": ref_arch_src,
         "ref_model_class_src": model_src,
         "ref_inputs_init_src": inputs_src,
         "validator_debug": bool(args.validator_debug),
-        "validator_debug_dir": str(args.validator_debug_dir),
+        "validator_debug_dir": f"{args.validator_debug_dir}/{problem_name}",
         "validator_debug_max_code_chars": int(args.validator_debug_max_code_chars),
+        "execution_mode": str(args.execution_mode),
+        "remote_validator_url": str(args.remote_validator_url),
+        "remote_poll_interval": float(args.remote_poll_interval),
     }
     (problem_dir / "run_config.json").write_text(
         json.dumps(run_cfg, ensure_ascii=False, indent=2),
@@ -210,11 +311,20 @@ def main() -> None:
     proxy_proc: subprocess.Popen[str] | None = None
     effective_llm_base_url = str(args.llm_base_url)
     if str(args.llm_log_dir).strip():
-        log_dir = Path(str(args.llm_log_dir)).expanduser().resolve()
+        llm_log_dir = f"{args.llm_log_dir}/{problem_name}"
+        log_dir = Path(llm_log_dir).expanduser().resolve()
         log_dir.mkdir(parents=True, exist_ok=True)
         proxy_script = problem_dir / "scripts" / "openai_proxy_logger.py"
         if not proxy_script.exists():
             raise FileNotFoundError(f"Missing proxy script: {proxy_script}")
+
+        if args.llm_log_port is not None:
+            llm_log_port = int(args.llm_log_port)
+        else:
+            # Pick a random free port
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                s.bind(("", 0))
+                llm_log_port = s.getsockname()[1]
 
         proxy_cmd = [
             sys.executable,
@@ -222,7 +332,7 @@ def main() -> None:
             "--listen-host",
             "127.0.0.1",
             "--listen-port",
-            str(int(args.llm_log_port)),
+            str(llm_log_port),
             "--upstream",
             str(args.llm_base_url),
             "--log-dir",
@@ -237,7 +347,7 @@ def main() -> None:
         )
         # Give the proxy a moment to bind.
         time.sleep(0.2)
-        effective_llm_base_url = f"http://127.0.0.1:{int(args.llm_log_port)}"
+        effective_llm_base_url = f"http://127.0.0.1:{llm_log_port}"
 
     # Allow KernelGeneration-local Hydra configs (pipeline=kernel_generation_direct, etc.).
     config_dir = (problem_dir / "config").resolve()
@@ -246,14 +356,14 @@ def main() -> None:
             f"Missing KernelGeneration config directory: {config_dir} "
             "(expected after moving pipeline config out of gigaevo-core-internal)."
         )
-
+    
     cmd = [
         sys.executable,
         str(run_py),
         f"experiment={args.experiment}",
         f"hydra.searchpath=[file://{config_dir}]",
         "pipeline=kernel_generation_direct",
-        "problem.name=kernel_generation",
+        f"problem.name={problem_name}",
         f"problem.dir={problem_dir}",
         f"redis.db={args.redis_db}",
         f"redis.resume={'true' if args.redis_resume else 'false'}",
@@ -290,7 +400,28 @@ def main() -> None:
         else:
             env["PYTHONPATH"] = extra_path
 
-        subprocess.run(cmd, cwd=str(gigaevo_dir), check=True, env=env)
+        # If stdout_dir is set, we use Popen and manually tee the output from the subprocess.
+        if str(args.stdout_dir).strip():
+            proc = subprocess.Popen(
+                cmd,
+                cwd=str(gigaevo_dir),
+                env=env,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                bufsize=1,
+            )
+            # We are already inside the main process which has sys.stdout redirected to Tee.
+            # Reading from proc.stdout and printing will automatically write to both terminal and log file.
+            if proc.stdout:
+                for line in proc.stdout:
+                    print(line, end="", flush=True)
+            
+            proc.wait()
+            if proc.returncode != 0:
+                raise subprocess.CalledProcessError(proc.returncode, cmd)
+        else:
+            subprocess.run(cmd, cwd=str(gigaevo_dir), check=True, env=env)
     finally:
         if proxy_proc is not None:
             try:
