@@ -121,7 +121,11 @@ def main() -> None:
     p = argparse.ArgumentParser(
         description=(
             "Compare two extracted KernelBench programs by running both against the same "
-            "reference problem and printing correctness + runtime deltas."
+            "reference problem and printing correctness + runtime deltas.\n"
+            "\n"
+            "Reference problem sources:\n"
+            "- KernelBench: select with (--level, --problem-id)\n"
+            "- Custom: pass --problem-path to a KernelBench-style `task.py` (or a dir containing task.py)\n"
         )
     )
 
@@ -136,11 +140,17 @@ def main() -> None:
         help="Print a unified diff of the two program sources before evaluation.",
     )
 
-    # KernelBench problem selection (keep identical to generate_and_eval_single_sample_gigaevo.py)
+    # Problem selection
+    p.add_argument(
+        "--problem-path",
+        default="",
+        help="Optional: path to a custom problem file or a directory containing `task.py` (bypasses KernelBench dataset loading).",
+    )
+    # KernelBench problem selection (compatible with generate_and_eval_single_sample_gigaevo.py)
     p.add_argument("--dataset-src", default="huggingface", choices=["huggingface", "local"])
     p.add_argument("--dataset-name", default="ScalingIntelligence/KernelBench")
-    p.add_argument("--level", type=int, required=True)
-    p.add_argument("--problem-id", type=int, required=True)
+    p.add_argument("--level", type=int, default=None)
+    p.add_argument("--problem-id", type=int, default=None)
 
     # Evaluation settings
     p.add_argument("--backend", default="cuda", choices=["cuda", "triton", "tilelang", "cute"])
@@ -149,6 +159,18 @@ def main() -> None:
     p.add_argument("--num-correct-trials", type=int, default=5)
     p.add_argument("--num-perf-trials", type=int, default=100)
     p.add_argument("--seed", type=int, default=42)
+    p.add_argument(
+        "--output-rtol",
+        type=float,
+        default=None,
+        help="Relative tolerance for output correctness checks (overrides KernelBench per-precision default).",
+    )
+    p.add_argument(
+        "--output-atol",
+        type=float,
+        default=None,
+        help="Absolute tolerance for output correctness checks (overrides KernelBench per-precision default).",
+    )
     p.add_argument(
         "--no-perf",
         action="store_true",
@@ -166,7 +188,12 @@ def main() -> None:
         default="",
         help="Path to kernel_generation directory (defaults to repo root next to this script).",
     )
-
+    
+    p.add_argument(
+        "--device",
+        default="cuda:7",
+        help="Device to use for evaluation (default: cuda:7).",
+    )
     args = p.parse_args()
 
     program_a_path = Path(args.program_a).expanduser().resolve()
@@ -184,24 +211,61 @@ def main() -> None:
 
     _add_kernelbench_to_sys_path(problem_dir)
 
+    def _resolve_problem_file(problem_path: str) -> Path:
+        pp = Path(problem_path).expanduser().resolve()
+        if pp.is_dir():
+            candidate = pp / "task.py"
+            if candidate.exists():
+                return candidate
+            raise FileNotFoundError(f"Custom problem dir must contain task.py: {pp}")
+        if not pp.exists():
+            raise FileNotFoundError(f"Custom problem file not found: {pp}")
+        return pp
+
     # Import after sys.path fix
     import torch  # noqa: PLC0415
-    from kernelbench.dataset import construct_kernelbench_dataset  # noqa: PLC0415
     from kernelbench.eval import eval_kernel_against_ref, get_torch_dtype_from_string  # noqa: PLC0415
 
     if not torch.cuda.is_available():
         raise RuntimeError("CUDA is not available; KernelBench eval requires a GPU.")
 
-    ds = construct_kernelbench_dataset(
-        level=int(args.level),
-        source=str(args.dataset_src),
-        dataset_name=str(args.dataset_name),
-    )
-    kb_problem = ds.get_problem_by_id(int(args.problem_id))
-    ref_arch_src = kb_problem.code
+    if str(args.problem_path).strip():
+        problem_file = _resolve_problem_file(str(args.problem_path))
+        ref_arch_src = _read_text(problem_file)
+        problem_label = f"custom:{problem_file}"
+        problem_meta = {
+            "kind": "custom",
+            "problem_path": str(problem_file),
+        }
+    else:
+        if args.level is None or args.problem_id is None:
+            raise SystemExit("Must provide either --problem-path OR both --level and --problem-id.")
+
+        from kernelbench.dataset import construct_kernelbench_dataset  # noqa: PLC0415
+
+        ds = construct_kernelbench_dataset(
+            level=int(args.level),
+            source=str(args.dataset_src),
+            dataset_name=str(args.dataset_name),
+        )
+        kb_problem = ds.get_problem_by_id(int(args.problem_id))
+        ref_arch_src = kb_problem.code
+        problem_label = f"kernelbench:level={int(args.level)} problem_id={int(args.problem_id)}"
+        problem_meta = {
+            "kind": "kernelbench",
+            "dataset_src": str(args.dataset_src),
+            "dataset_name": str(args.dataset_name),
+            "level": int(args.level),
+            "problem_id": int(args.problem_id),
+        }
 
     program_a_src = _read_text(program_a_path)
     program_b_src = _read_text(program_b_path)
+    
+    if " Model(" in program_a_src:
+        program_a_src = program_a_src.replace(" Model", " ModelNew")
+    if " Model(" in program_b_src:
+        program_b_src = program_b_src.replace(" Model", " ModelNew")
 
     if bool(args.show_diff):
         print("== Program diff (A -> B) ==")
@@ -222,9 +286,10 @@ def main() -> None:
 
     print(
         "Running KernelBench eval for both programs with settings:\n"
-        f"- level={int(args.level)} problem_id={int(args.problem_id)} source={args.dataset_src}\n"
+        f"- problem={problem_label}\n"
         f"- backend={args.backend} precision={args.precision}\n"
         f"- num_correct_trials={int(args.num_correct_trials)} num_perf_trials={int(args.num_perf_trials)} measure_perf={measure_perf}\n"
+        f"- output_rtol={args.output_rtol} output_atol={args.output_atol}\n"
     )
 
     # Important: eval_kernel_against_ref generates inputs internally from ref code,
@@ -240,6 +305,9 @@ def main() -> None:
         verbose=False,
         backend=str(args.backend),
         precision=precision,
+        output_rtol=(float(args.output_rtol) if args.output_rtol is not None else None),
+        output_atol=(float(args.output_atol) if args.output_atol is not None else None),
+        device=torch.device(args.device),
     )
     if res_a is None:
         raise RuntimeError("Program A evaluation returned None (likely a lock/concurrent compilation issue). Retry.")
@@ -255,6 +323,9 @@ def main() -> None:
         verbose=False,
         backend=str(args.backend),
         precision=precision,
+        output_rtol=(float(args.output_rtol) if args.output_rtol is not None else None),
+        output_atol=(float(args.output_atol) if args.output_atol is not None else None),
+        device=torch.device(args.device),
     )
     if res_b is None:
         raise RuntimeError("Program B evaluation returned None (likely a lock/concurrent compilation issue). Retry.")
@@ -269,12 +340,7 @@ def main() -> None:
     if str(args.json_out).strip():
         out_path = Path(args.json_out).expanduser().resolve()
         payload = {
-            "problem": {
-                "dataset_src": str(args.dataset_src),
-                "dataset_name": str(args.dataset_name),
-                "level": int(args.level),
-                "problem_id": int(args.problem_id),
-            },
+            "problem": problem_meta,
             "settings": {
                 "backend": str(args.backend),
                 "precision": str(args.precision),
@@ -283,6 +349,8 @@ def main() -> None:
                 "num_perf_trials": int(args.num_perf_trials),
                 "seed": int(args.seed),
                 "measure_perf": bool(measure_perf),
+                "output_rtol": (float(args.output_rtol) if args.output_rtol is not None else None),
+                "output_atol": (float(args.output_atol) if args.output_atol is not None else None),
             },
             "programs": {
                 "a": {
