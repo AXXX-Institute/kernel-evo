@@ -12,12 +12,13 @@ from gigaevo.entrypoint.constants import DEFAULT_STAGE_TIMEOUT
 from gigaevo.entrypoint.default_pipelines import ContextPipelineBuilder
 from gigaevo.entrypoint.evolution_context import EvolutionContext
 from gigaevo.programs.core_types import VoidInput
-from gigaevo.programs.dag.automata import ExecutionOrderDependency
 from gigaevo.programs.program import Program
 from gigaevo.programs.stages.base import Stage
 from gigaevo.programs.stages.common import AnyContainer
 from gigaevo.programs.stages.stage_registry import StageRegistry
+from gigaevo.programs.stages import RepairStage
 
+MAX_PROGRAM_REPAIRS = 10
 
 @StageRegistry.register(description="Expose Program.code as a payload for downstream stages")
 class ProgramCodeAsPayload(Stage):
@@ -61,23 +62,40 @@ class DirectCodeContextPipelineBuilder(ContextPipelineBuilder):
     def __init__(self, ctx: EvolutionContext):
         super().__init__(ctx)
 
+        # We run syntax/safe-mode checks inside RepairStage so that broken candidates
+        # can be repaired instead of being dropped by an early-stage failure.
+        self.remove_stage("ValidateCodeStage")
+
         # Remove the entrypoint call stage and any edges/deps referencing it.
         self.remove_stage("CallProgramFunction")
 
-        # Replace it with a tiny stage that exposes Program.code as the validator payload.
+        # Replace the validator stage with a repair loop that retries validation.
+        self.remove_stage("CallValidatorFunction")
+
+        # Feed Program.code directly into the repair/validator loop.
         self.add_stage(
             "ProgramCodeAsPayload",
             lambda: ProgramCodeAsPayload(timeout=DEFAULT_STAGE_TIMEOUT),
         )
-        self.add_data_flow_edge(
-            "ProgramCodeAsPayload", "CallValidatorFunction", "payload"
+
+        validator_path = ctx.problem_ctx.problem_dir / "validate.py"
+        self.add_stage(
+            "RepairStage",
+            lambda: RepairStage(
+                timeout=DEFAULT_STAGE_TIMEOUT,
+                llm=ctx.llm_wrapper,
+                validator_path=validator_path,
+                task_description=ctx.problem_ctx.task_description,
+                max_repairs=MAX_PROGRAM_REPAIRS,
+            ),
         )
 
-        # Ensure we only evaluate if the code passed the (safe-mode) validator.
-        self.add_exec_dep(
-            "ProgramCodeAsPayload",
-            ExecutionOrderDependency.on_success("ValidateCodeStage"),
-        )
+        # Wire payload+context into RepairStage
+        self.add_data_flow_edge("ProgramCodeAsPayload", "RepairStage", "payload")
+        self.add_data_flow_edge("AddContext", "RepairStage", "context")
+
+        # Replace upstream edge for metrics merge: validator metrics now come from RepairStage.
+        self.add_data_flow_edge("RepairStage", "MergeMetricsStage", "first")
 
 
 class DirectCodeContextPipelineNoInsightsLineageBuilder(DirectCodeContextPipelineBuilder):
@@ -88,13 +106,20 @@ class DirectCodeContextPipelineNoInsightsLineageBuilder(DirectCodeContextPipelin
 
     MutationContextStage supports these inputs as Optional, so evolution continues with
     a "metrics-only" mutation context (plus any other remaining optional context).
+    
+    NOTE: This builder keeps InsightsStage running so that compilation_fix insights
+    can be generated from failed programs. These insights flow to MutationContextStage
+    and are used by the mutation agent to fix compilation errors.
     """
 
     def __init__(self, ctx):
         super().__init__(ctx)
 
-        # LLM analysis stages that frequently fail due to strict structured output parsing.
-        self.remove_stage("InsightsStage")
+        # Keep InsightsStage running to generate compilation_fix insights from failed programs.
+        # The insights flow to MutationContextStage and are used by the mutation agent.
+        # 
+        # LineageStage is removed because it requires successful execution to generate
+        # transition analysis between parent-child programs.
         self.remove_stage("LineageStage")
         self.remove_stage("LineagesFromAncestors")
         self.remove_stage("LineagesToDescendants")
