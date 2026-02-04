@@ -18,7 +18,28 @@ Can be evolved with local or remote model (in example, sglang_server and openrou
 
 ### With custom kernel
 
+Run in different process:    
 ```
+python3 validate_server.py --port 15000
+```
+
+```
+OPENAI_API_KEY="sk-or-v1-" python3 /home/sivtsov/kernel_generation/scripts/generate_and_eval_single_sample_gigaevo.py \
+  --problem-path /home/sivtsov/kernel_generation/tasks/armt_associate/task.py \
+  --experiment-name custom_associate \
+  --backend triton \
+  --precision fp16 \
+  --model-name openai/gpt-oss-120b \
+  --llm-base-url https://openrouter.ai/api/v1 \
+  --redis-db 1 \
+  --max-generations 40 \
+  --max-mutations-per-generation 1 \
+  --validator-debug --validator-debug-dir /home/sivtsov/kernel_generation/outputs/validate_logs \
+  --llm-log-dir /home/sivtsov/kernel_generation/outputs/traces --llm-log-port 14005 \
+  --stdout-dir /home/sivtsov/kernel_generation/outputs/logs --disable-insights-lineage --execution-mode remote_execution --use-memory-for-errors
+```
+
+<!-- ```
 OPENAI_API_KEY=EMPTY python3 scripts/generate_and_eval_single_sample_gigaevo.py \
   --problem-path tasks/armt_associate/task.py \
   --backend triton \
@@ -30,7 +51,7 @@ OPENAI_API_KEY=EMPTY python3 scripts/generate_and_eval_single_sample_gigaevo.py 
   --max-generations 40 \
   --max-mutations-per-generation 2 \
   --validator-debug --validator-debug-dir <dir_for_validations_debug> --llm-log-dir <dir_for_logs>
-```
+``` -->
 
 ### With KernelBench task
 
