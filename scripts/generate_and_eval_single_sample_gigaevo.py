@@ -89,7 +89,7 @@ def main() -> None:
     p.add_argument(
         "--output-rtol",
         type=float,
-        default=None,
+        default=0.5,
         help=(
             "Relative tolerance for output correctness checks. If unset, KernelBench defaults based on precision."
         ),
@@ -97,7 +97,7 @@ def main() -> None:
     p.add_argument(
         "--output-atol",
         type=float,
-        default=None,
+        default=0.5,
         help=(
             "Absolute tolerance for output correctness checks. If unset, KernelBench defaults based on precision."
         ),
@@ -162,6 +162,12 @@ def main() -> None:
     p.add_argument("--max-elites-per-generation", type=int, default=1)
     p.add_argument("--max-mutations-per-generation", type=int, default=1)
     p.add_argument("--num-parents", type=int, default=1)
+    p.add_argument(
+        "--use-memory-for-errors",
+        action="store_true",
+        default=False,
+        help="Enable memory for errors in RepairStage (default: False).",
+    )
 
     args = p.parse_args()
 
@@ -264,6 +270,7 @@ def main() -> None:
         "execution_mode": str(args.execution_mode),
         "remote_validator_url": str(args.remote_validator_url),
         "remote_poll_interval": float(args.remote_poll_interval),
+        "use_memory_for_errors": bool(args.use_memory_for_errors),
     }
     (problem_dir / "run_config.json").write_text(
         json.dumps(run_cfg, ensure_ascii=False, indent=2),

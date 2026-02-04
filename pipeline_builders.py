@@ -8,6 +8,8 @@ These are used to tweak the GigaEvo pipeline *without* modifying `gigaevo-core-i
 - The pipeline builder target can point at `kernel_generation.*` (ensure repo root is on PYTHONPATH).
 """
 
+import json
+
 from gigaevo.entrypoint.constants import DEFAULT_STAGE_TIMEOUT
 from gigaevo.entrypoint.default_pipelines import ContextPipelineBuilder
 from gigaevo.entrypoint.evolution_context import EvolutionContext
@@ -79,6 +81,17 @@ class DirectCodeContextPipelineBuilder(ContextPipelineBuilder):
         )
 
         validator_path = ctx.problem_ctx.problem_dir / "validate.py"
+        
+        # Read use_memory_for_errors from run_config.json if available
+        use_memory_for_errors = False
+        run_config_path = ctx.problem_ctx.problem_dir / "run_config.json"
+        if run_config_path.exists():
+            try:
+                run_config = json.loads(run_config_path.read_text(encoding="utf-8"))
+                use_memory_for_errors = bool(run_config.get("use_memory_for_errors", False))
+            except Exception:
+                pass  # Use default if config can't be read
+        
         self.add_stage(
             "RepairStage",
             lambda: RepairStage(
@@ -87,6 +100,7 @@ class DirectCodeContextPipelineBuilder(ContextPipelineBuilder):
                 validator_path=validator_path,
                 task_description=ctx.problem_ctx.task_description,
                 max_repairs=MAX_PROGRAM_REPAIRS,
+                use_memory_for_errors=use_memory_for_errors,
             ),
         )
 
