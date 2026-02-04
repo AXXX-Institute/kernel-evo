@@ -36,7 +36,7 @@ OPENAI_API_KEY="sk-or-v1-" python3 /home/sivtsov/kernel_generation/scripts/gener
   --max-mutations-per-generation 1 \
   --validator-debug --validator-debug-dir /home/sivtsov/kernel_generation/outputs/validate_logs \
   --llm-log-dir /home/sivtsov/kernel_generation/outputs/traces --llm-log-port 14005 \
-  --stdout-dir /home/sivtsov/kernel_generation/outputs/logs --disable-insights-lineage --execution-mode remote_execution --use-memory-for-errors
+  --stdout-dir /home/sivtsov/kernel_generation/outputs/logs --disable-insights-lineage --execution-mode remote_execution
 ```
 
 <!-- ```
