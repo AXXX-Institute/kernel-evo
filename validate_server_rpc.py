@@ -1,14 +1,26 @@
-from fastapi import FastAPI, BackgroundTasks, HTTPException
+from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from typing import Any, Dict, Optional
 import uuid
 import asyncio
+import multiprocessing as mp
+from concurrent.futures import ProcessPoolExecutor
+import sys
 
 app = FastAPI()
 
 # In-memory storage for simplicity as per requirement
 # In a real-world scenario, this should be a persistent database or Redis.
 jobs: Dict[str, Dict[str, Any]] = {}
+
+# ProcessPoolExecutor for running validation in isolated subprocess
+# Using spawn context to avoid CUDA context issues
+mp_ctx = mp.get_context("spawn")
+# Python 3.11+: max_tasks_per_child makes the worker process restart periodically
+if sys.version_info >= (3, 11):
+    executor = ProcessPoolExecutor(max_workers=1, mp_context=mp_ctx, max_tasks_per_child=1)
+else:
+    executor = ProcessPoolExecutor(max_workers=1, mp_context=mp_ctx)
 
 class ValidationRequest(BaseModel):
     cfg: Dict[str, Any]
@@ -26,8 +38,38 @@ class ResultResponse(BaseModel):
 # This will be injected by validate_server.py
 worker_function = None
 
+# Wrapper function that can be pickled and run in subprocess
+def _run_worker_in_subprocess(job_id: str, cfg: Dict[str, Any], payload: Any):
+    """Wrapper to run worker function in subprocess and return result"""
+    # Import here to ensure it's available in subprocess (validate_server module)
+    # Need to add parent directory to path for subprocess imports
+    import sys
+    from pathlib import Path
+    parent_dir = str(Path(__file__).parent.parent)
+    if parent_dir not in sys.path:
+        sys.path.insert(0, parent_dir)
+    
+    from kernel_generation.validate_server import _run_validation_core
+    return _run_validation_core(job_id, cfg, payload)
+
+async def _update_job_result(job_id: str, future):
+    """Update job result from subprocess future"""
+    try:
+        # Wait for the future result in a thread pool (future.result() is blocking)
+        result = await asyncio.get_event_loop().run_in_executor(None, future.result)
+        jobs[job_id].update(result)
+    except Exception as e:
+        jobs[job_id]["status"] = "failed"
+        jobs[job_id]["error_msg"] = str(e)
+        jobs[job_id]["error_type"] = type(e).__name__
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    """Cleanup ProcessPoolExecutor on shutdown"""
+    executor.shutdown(wait=True)
+
 @app.post("/schedule_validate", response_model=ValidationResponse)
-async def schedule_validate(request: ValidationRequest, background_tasks: BackgroundTasks):
+async def schedule_validate(request: ValidationRequest):
     job_id = str(uuid.uuid4())
     jobs[job_id] = {
         "status": "pending",
@@ -36,11 +78,14 @@ async def schedule_validate(request: ValidationRequest, background_tasks: Backgr
         "error_type": None,
     }
     
-    if worker_function:
-        background_tasks.add_task(worker_function, job_id, request.cfg, request.payload)
-    else:
-        jobs[job_id]["status"] = "failed"
-        jobs[job_id]["error_msg"] = "Worker function not initialized"
+    # Submit task to ProcessPoolExecutor
+    future = executor.submit(_run_worker_in_subprocess, job_id, request.cfg, request.payload)
+    
+    # Update job status to running
+    jobs[job_id]["status"] = "running"
+    
+    # Schedule async task to update job result when subprocess completes
+    asyncio.create_task(_update_job_result(job_id, future))
         
     return ValidationResponse(job_id=job_id)
 

@@ -169,7 +169,8 @@ def run_local_validation(
     ref_arch_src: str,
 ) -> dict[str, float]:
     import torch
-    from kernelbench.eval import eval_kernel_against_ref, get_torch_dtype_from_string
+    # from kernelbench.eval import eval_kernel_against_ref, get_torch_dtype_from_string
+    from kernel_generation.eval.eval import eval_kernel_against_ref, get_torch_dtype_from_string
 
     if not torch.cuda.is_available():
         raise ValueError("CUDA is not available")
@@ -181,10 +182,12 @@ def run_local_validation(
     num_perf_trials = int(cfg.get("num_perf_trials", 100))
     output_rtol = cfg.get("output_rtol")
     output_atol = cfg.get("output_atol")
+    logger.info(f"[Validate],1: output_rtol: {output_rtol}, output_atol: {output_atol}")
     if not isinstance(output_rtol, (int, float)):
         output_rtol = None
     if not isinstance(output_atol, (int, float)):
         output_atol = None
+    logger.info(f"[Validate],2: output_rtol: {output_rtol}, output_atol: {output_atol}")
 
     captured_buf = io.StringIO()
     result = None

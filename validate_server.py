@@ -12,10 +12,9 @@ from kernel_generation.validate import run_local_validation, _extract_custom_mod
 from kernel_generation.validate_server_rpc import app, jobs
 import kernel_generation.validate_server_rpc as rpc
 
-async def worker_task(job_id: str, cfg: Dict[str, Any], payload: Any):
+def _run_validation_core(job_id: str, cfg: Dict[str, Any], payload: Any) -> Dict[str, Any]:
+    """Core validation logic that returns result dict. Can be run in subprocess."""
     try:
-        jobs[job_id]["status"] = "running"
-        
         problem_dir = _find_problem_dir()
         _add_kernelbench_to_sys_path(problem_dir)
         
@@ -38,15 +37,28 @@ async def worker_task(job_id: str, cfg: Dict[str, Any], payload: Any):
         
         logger.info(f"Validation result for job {job_id}: {result}")
         
-        jobs[job_id]["result"] = result
-        jobs[job_id]["status"] = "completed"
+        return {
+            "status": "completed",
+            "result": result,
+            "error_msg": None,
+            "error_type": None,
+        }
     except Exception as e:
         import traceback
         logger.error(f"Error for job {job_id}: {traceback.format_exc()}")
-        jobs[job_id]["status"] = "failed"
-        # jobs[job_id]["error_msg"] = f"{traceback.format_exc()} \n {str(e)}"
-        jobs[job_id]["error_msg"] = str(e)
-        jobs[job_id]["error_type"] = type(e).__name__
+        return {
+            "status": "failed",
+            "result": None,
+            "error_msg": str(e),
+            "error_type": type(e).__name__,
+        }
+
+# explicitly made sync to run in thread to avoid segfaults
+def worker_task(job_id: str, cfg: Dict[str, Any], payload: Any):
+    """Worker task that updates jobs dict directly (for backward compatibility)"""
+    jobs[job_id]["status"] = "running"
+    result_dict = _run_validation_core(job_id, cfg, payload)
+    jobs[job_id].update(result_dict)
 
 def main():
     parser = argparse.ArgumentParser(description="Kernel Generation Validation Server")
