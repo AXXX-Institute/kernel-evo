@@ -1,3 +1,65 @@
+
+### Goal
+Evolve a program that is **Python source code** implemented in torch.nn.Module interface.
+The code must:
+- Be correct (matches the reference outputs)
+- Be more efficient (lower runtime than the reference on GPU)
+- Use triton backend as primary framework for kernel implementation
+- Efficient implementation primary for fp16 precision, so you can use type specific optimizations
+
+### Output / parsing rules (IMPORTANT)
+Many prompts in this workflow are **machine-parsed**. Follow the requested format exactly:
+- If the prompt asks for JSON: output **raw JSON only** (no markdown fences, no extra text, no extra keys).
+- If the prompt asks for code inside a JSON field (e.g., `code`): put **only valid Python** in that field (no markdown).
+
+### Performance target (Triton-first)
+- Replace dominant Torch ops (e.g., einsum/matmul/reductions + elementwise chains) with backend kernels.
+- Prefer fusion: fewer kernel launches, fewer intermediate tensors, fewer full passes over HBM-resident tensors.
+- For Triton: use masked `tl.load`/`tl.store` for tail tiles, prefer matmul-style blocking (`tl.dot`) for GEMM-like work,
+  and accumulate sensitive reductions/dot products in fp32 (cast at the end).
+
+### Insight traceability (IMPORTANT)
+- Program insights will be prefixed with IDs like `[id:<type>_<nn>] ...`.
+- When asked for `insights_used`, copy the insight strings **verbatim**, including the `[id:...]` prefix.
+
+### Mutation justification expectation
+When asked for a justification, include a short **kernel plan**: which Torch ops were replaced, which kernels were added,
+what was fused, and why this reduces launches / memory traffic.
+
+### What your evolving program must do (IMPORTANT)
+Your evolving program is stored as `Program.code` and is evaluated *directly*.
+
+- Your program must be a **single self-contained Python module**.
+- It must define: `class ModelNew(torch.nn.Module): ...` and use same interface as the reference model
+
+### HARD REQUIREMENT: Backend compliance (submission validity)
+- Backend is `triton`.
+- Your program is INVALID unless it uses that backend *at least once* in the forward pass.
+- Defining backend code but never calling it is NON-COMPLIANT.
+- The backend call must contribute to the returned output (not a dead/no-op side call).
+
+#### NON-NEGOTIABLE TRITON COMPLIANCE GATE (submission invalid otherwise)
+- `import triton` and `import triton.language as tl`
+- at least one kernel decorated with `@triton.jit`
+- at least one kernel launch executed from `ModelNew.forward(...)` (e.g. `kernel[grid](...)`)
+- the Triton kernel output must contribute to the returned output (not a dead/no-op side call)
+
+Not sufficient:
+- importing Triton but never launching a kernel
+- defining a Triton kernel but never calling it
+- relying on `torch.compile` / Inductor without an explicit `@triton.jit` kernel
+
+
+During evaluation, the validator will call:
+`kernelbench.eval.eval_kernel_against_ref(ref_arch_src, program_code, backend=..., precision=...)`
+
+### IMPORTANT: Safe-mode restrictions on evolving program code
+Your evolving program is checked by GigaEvo safe-mode. Do NOT:
+- `import os`, `import sys`, or `import subprocess`
+- Use file I/O (e.g. `open(...)`, `.read()`, `.write()`, `.remove()`, `.unlink()`)
+
+### Reference model source code
+<<<REF_MODEL_CLASS_BEGIN>>>
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -30,7 +92,9 @@ class Model(nn.Module):
       - out: hidden_states (bsz, seq_len, d_model)
     """
 
-    def __init__(self, d_model: int, d_mem: int, n_heads: int, use_denom: bool, nu: int, batch_size: int = 1):
+    def __init__(
+        self, d_model: int, d_mem: int, n_heads: int, use_denom: bool, nu: int, batch_size: int = 1
+    ):
         super().__init__()
 
         # Default shapes (tuned to be non-trivial but GPU/CI-friendly).
@@ -111,6 +175,10 @@ class Model(nn.Module):
 
 
 # Benchmark sizes / defaults (KernelBench-style globals)
+<<<REF_MODEL_CLASS_END>>>
+
+### Reference inputs/init (NOT part of your generated code)
+<<<REF_INPUTS_INIT_BEGIN>>>
 batch_size = 8
 seq_len = 1024
 d_model = 4096
@@ -133,3 +201,5 @@ def get_inputs():
 def get_init_inputs():
     # (self, d_model: int, d_mem: int, n_heads: int, use_denom: bool, nu: int):
     return [d_model, d_mem, n_heads, use_denom, nu, batch_size]
+<<<REF_INPUTS_INIT_END>>>
+

@@ -1,5 +1,17 @@
 # Kernel generation
 
+## installation
+
+```
+https://github.com/svtdanny/kernel_generation.git
+cd kernel_generation
+pip install -e . --ignore-requires-python
+```
+
+For custom branches of gigaevo, kernelbench see `pyproject.toml`
+
+## Custom kernel
+
 To evolve your own kernel, you need to create task in KernelBench format.  
 See example in `tasks/armt_associate`:
 ```
@@ -18,14 +30,14 @@ Can be evolved with local or remote model (in example, sglang_server and openrou
 
 ### With custom kernel
 
-Run in different process:    
+Run in different terminal:    
 ```
-python3 validate_server.py --port 15000
+python3 -m kernel_generation eval_server --port 15000
 ```
 
 ```
-OPENAI_API_KEY="sk-or-v1-" python3 /home/sivtsov/kernel_generation/scripts/generate_and_eval_single_sample_gigaevo.py \
-  --problem-path /home/sivtsov/kernel_generation/tasks/armt_associate/task.py \
+OPENAI_API_KEY="sk-or-v1-" python3 -m kernel_generation evolve \
+  --problem-path tasks/armt_associate/task.py \
   --experiment-name custom_associate \
   --backend triton \
   --precision fp16 \
@@ -34,9 +46,9 @@ OPENAI_API_KEY="sk-or-v1-" python3 /home/sivtsov/kernel_generation/scripts/gener
   --redis-db 1 \
   --max-generations 40 \
   --max-mutations-per-generation 1 \
-  --validator-debug --validator-debug-dir /home/sivtsov/kernel_generation/outputs/validate_logs \
-  --llm-log-dir /home/sivtsov/kernel_generation/outputs/traces --llm-log-port 14005 \
-  --stdout-dir /home/sivtsov/kernel_generation/outputs/logs --disable-insights-lineage --execution-mode remote_execution
+  --validator-debug --validator-debug-dir outputs/validate_logs \
+  --llm-log-dir outputs/traces --llm-log-port 14005 \
+  --stdout-dir outputs/logs --disable-insights-lineage --execution-mode remote_execution
 ```
 
 <!-- ```
@@ -56,7 +68,7 @@ OPENAI_API_KEY=EMPTY python3 scripts/generate_and_eval_single_sample_gigaevo.py 
 ### With KernelBench task
 
 ```
-OPENAI_API_KEY=<KEY> python3 scripts/generate_and_eval_single_sample_gigaevo.py \
+OPENAI_API_KEY=<KEY> python3 -m kernel_generation evolve \
   --level 1 \
   --problem-id 36 \
   --dataset-src huggingface \
@@ -82,7 +94,7 @@ tensorboard --logdir .
 __Ps:__ use tensorboard to see iterations with good performance
 
 ```
-PYTHONPATH=$PYTHONPATH:<PREFIX_PATH>/gigaevo-core-internal python3 extract_program.py --redis-db 2 --iteration 8 --redis-prefix "kernel_generation" --output-file prog8.py
+python3 -m kernel_generation extract --redis-db 2 --iteration 8 --redis-prefix "kernel_generation" --output-file prog8.py
 ```
 
 ## Compare two programs
@@ -90,7 +102,7 @@ PYTHONPATH=$PYTHONPATH:<PREFIX_PATH>/gigaevo-core-internal python3 extract_progr
 ### Custom task
 
 ```
-PYTHONPATH=$PYTHONPATH:<PREFIX_PATH>/gigaevo-core-internal python3 scripts/compare_programs.py \
+python3 -m kernel_generation compare \
   --program-a prog_a.py \
   --program-b prog_b.py \
   --problem-path tasks/armt_associate/task.py \
@@ -101,7 +113,7 @@ PYTHONPATH=$PYTHONPATH:<PREFIX_PATH>/gigaevo-core-internal python3 scripts/compa
 ### Kernel bench task
 
 ```
-PYTHONPATH=$PYTHONPATH:<PREFIX_PATH>/gigaevo-core-internal python3 scripts/compare_programs.py \
+python3 -m kernel_generation compare \
   --program-a prog_a.py \
   --program-b prog_b.py \
   --dataset-src huggingface \

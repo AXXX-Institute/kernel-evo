@@ -1,0 +1,35 @@
+# Install with Python version check relaxed (kernelbench declares 3.10.* but works on 3.12):
+#   pip install -e . --ignore-requires-python
+
+[project]
+name = "kernel-generation"
+version = "0.1.0"
+description = "Evolutional Generation for efficient kernels"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    # "gigaevo @ file:///home/sivtsov/gigaevo-core-internal",
+    "gigaevo @ git+https://github.com/KhrulkovV/gigaevo-core-internal.git@svtdanny/kernel-generation",
+    "kernelbench @ git+https://github.com/ScalingIntelligence/KernelBench.git",
+
+    "cma", # gigaevo. TODO: refactor on gigaevo side
+    # memory. TODO: refactor on gigaevo side
+    "chromadb", 
+    "nltk",
+    "rank_bm25",
+    "sentence_transformers",
+]
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[dependency-groups]
+dev = [
+    "ruff"
+]
+
+[tool.ruff]
+line-length = 120
+
+[tool.ruff.lint]
+select = ["E", "F"]  # E = pycodestyle (includes E501 line-too-long), F = Pyflakes
