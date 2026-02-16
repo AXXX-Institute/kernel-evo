@@ -6,6 +6,7 @@ import sys
 import time
 from pathlib import Path
 from typing import Any
+from kernel_generation.resources.prompt_loader import get_prompts_dir
 
 
 def _add_kernelbench_to_sys_path(problem_dir: Path) -> None:
@@ -247,12 +248,20 @@ def run_evolve(args: Any) -> None:
             "(expected after moving pipeline config out of gigaevo-core-internal)."
         )
 
+    # Prepend kernel_generation's config so llm/single uses our JSON-recover router.
+    _evolve_file = Path(__file__).resolve()
+    kg_config = _evolve_file.parent.parent.parent / "resources" / "config"
+    print(f"kg_config: {kg_config}")
+    searchpath = [f"file://{kg_config}", f"file://{config_dir}"]
+
     cmd = [
         sys.executable,
         str(run_py),
         f"experiment={args.experiment}",
-        f"hydra.searchpath=[file://{config_dir}]",
+        f"hydra.searchpath=[{','.join(searchpath)}]",
         "pipeline=kernel_generation_direct",
+        "prompts=kernel",
+        "llm=single_recover",
         f"problem.name={problem_name}",
         f"problem.dir={problem_dir}",
         f"redis.db={args.redis_db}",
@@ -291,6 +300,9 @@ def run_evolve(args: Any) -> None:
             env["PYTHONPATH"] = f"{prefix}:{env['PYTHONPATH']}"
         else:
             env["PYTHONPATH"] = prefix
+
+        # So prompts/kernel.yaml can use ${oc.env:KERNEL_GENERATION_PROMPTS_DIR}
+        env["KERNEL_GENERATION_PROMPTS_DIR"] = str(get_prompts_dir())
 
         # If stdout_dir is set, we use Popen and manually tee the output from the subprocess.
         if str(args.stdout_dir).strip():

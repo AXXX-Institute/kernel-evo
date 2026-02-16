@@ -1,0 +1,96 @@
+EVOLUTIONARY MUTATION: Adaptive Code Evolution (Torch → Triton)
+
+Transform the program using program insights and historical lineage intelligence with an intelligent exploration/exploitation balance — but prioritize real GPU wins: fewer launches, less HBM traffic, more fusion, correct masking.
+
+## INTELLIGENCE INPUTS
+
+**PROGRAM INSIGHTS**: category [tag] (severity): concrete evidence
+- Categories: LLM-generated 1-2 word labels
+- Tags: beneficial, harmful, neutral, fragile, rigid
+- Severity: high, medium, low
+- NOTE: Insight strings begin with `[id:...]` — copy them verbatim into `insights_used`.
+
+**TAG MEANINGS (evolutionary guidance)**:
+- **beneficial**: Current pattern is good → PRESERVE/EXTEND this approach
+- **harmful**: Current pattern is bad → REMOVE/AVOID this approach
+- **fragile**: Current pattern is risky → IMPROVE/ROBUSTIFY this approach
+- **rigid**: Current pattern is inflexible → MAKE MORE ADAPTABLE
+- **neutral**: Current pattern has no clear impact → IGNORE for evolution
+
+**LINEAGE INSIGHTS**: Historical mutation outcomes and their measured effects
+- strategy: imitation/generalization/avoidance/exploration/refinement (past action taken)
+- description: causal explanation with quantified impact (≤50 words)
+- delta: measured performance impact (relative change)
+
+**EVOLUTIONARY STATISTICS**: Population-level context
+- Generation history table: fitness trends across generations (← marks current)
+
+## TRITON-FIRST EXECUTION RULES (MANDATORY)
+
+### A) Compliance checklist (must be satisfied)
+Your `code` must include:
+- `import triton` and `import triton.language as tl`
+- ≥1 `@triton.jit` kernel
+- ≥1 kernel launch in `ModelNew.forward()` (or called by it) whose output affects the return value
+
+If any item is missing, your mutation is considered a failure even if the code runs.
+
+### B) Kernel plan (must be stated in justification)
+In `justification`, include 2-4 bullet points describing:
+- what Torch op(s) you replaced (e.g., einsum/matmul/reduction/elementwise chain)
+- what Triton kernel(s) you added (names + what they compute)
+- what you fused (e.g., numerator+denom, reduction+epilogue, activation/divide)
+- why this reduces launches / memory traffic or improve efficiency
+
+### D) Correctness constraints
+- Preserve semantics: output should match baseline within tolerance implied by the metric harness.
+- If you change numerics (fp16/bf16 vs fp32 accum), mention it in justification and keep it stable.
+
+## EVOLUTIONARY ARCHETYPE SELECTION (secondary to Triton compliance)
+
+Choose your approach based on evidence strength and risk tolerance:
+
+### EXPLOITATION ARCHETYPES (Evidence-Driven Refinement)
+1. Precision Optimization
+2. Proven Pattern Extension
+3. Harmful Pattern Removal
+
+### EXPLORATION ARCHETYPES (Innovation-Driven Change)
+4. Computational Reinvention
+5. Solution Space Exploration
+6. Approach Synthesis
+
+### HYBRID ARCHETYPES (Balanced Approach)
+7. Guided Innovation
+8. Conservative Exploration
+
+Guidelines:
+- Exploitation: ≤2 small, localized changes
+- Exploration: meaningful structural novelty required (e.g., new fused Triton kernel boundary)
+- Hybrid: preserve proven elements + targeted Triton improvements
+
+## OUTPUT FORMAT (STRUCTURED JSON)
+
+Your response will be parsed as JSON. Format:
+
+```json
+{{
+  "archetype": "Selected archetype name",
+  "justification": "2-5 sentences + kernel-plan bullets + compliance checklist statement",
+  "insights_used": ["copy insight text verbatim (including [id:...])", "..."],
+  "code": "complete Python program"
+}}
+
+**FIELDS:**
+- **archetype**: One of the 8 archetypes (e.g., "Precision Optimization", "Computational Reinvention")
+- **justification**: Free-form reasoning — cite program insights, lineage insights, and/or evolutionary statistics naturally
+- **insights_used**: Flat array of insight strings you acted on (copy the insight text verbatim)
+- **changes**: Array of dictionaries, each dictionary contain detailed description of one specific introduced change and explanation why it was introduced. You should provided a detailed description of introduced change, including constants and formulas. BAD EXAMPLE: "Make the constraint penalty function differentiable"; GOOD EXAMPLE: Increased the radius upper bound from 0.5 to 0.7 to allow for larger circles;
+- **code**: Complete mutated Python program (raw code, NO markdown fences)
+
+**CRITICAL**:
+- Include 1-3 insights in `insights_used` from the provided program insights
+- The `code` field must contain ONLY valid Python code
+- Focus on code quality — the justification should support your changes, not the other way around
+
+{parent_blocks}

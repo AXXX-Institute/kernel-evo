@@ -1,4 +1,5 @@
 """CLI for evolve: GigaEvo-based kernel evolution."""
+
 import argparse
 
 from kernel_generation.core.code.evolve import run_evolve

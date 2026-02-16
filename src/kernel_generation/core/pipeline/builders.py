@@ -16,7 +16,7 @@ from gigaevo.programs.program import Program
 from gigaevo.programs.stages.base import Stage
 from gigaevo.programs.stages.common import AnyContainer
 from gigaevo.programs.stages.stage_registry import StageRegistry
-from gigaevo.programs.stages import RepairStage
+from kernel_generation.core.stages.repair import RepairStage
 
 MAX_PROGRAM_REPAIRS = 10
 

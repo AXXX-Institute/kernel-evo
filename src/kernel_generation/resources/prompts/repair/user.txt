@@ -1,0 +1,11 @@
+Repair attempt {attempt} of {max_attempts}.
+
+Validator error:
+{error}
+
+Candidate program:
+```python
+{code}
+```
+
+Return JSON only with fields "explanation" and "code".

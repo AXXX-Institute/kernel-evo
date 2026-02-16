@@ -9,7 +9,7 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     # "gigaevo @ file:///home/sivtsov/gigaevo-core-internal",
-    "gigaevo @ git+https://github.com/KhrulkovV/gigaevo-core-internal.git@svtdanny/kernel-generation",
+    "gigaevo @ git+https://github.com/KhrulkovV/gigaevo-core-internal.git@svtdanny/kernel-generation-minimized",
     "kernelbench @ git+https://github.com/ScalingIntelligence/KernelBench.git",
 
     "cma", # gigaevo. TODO: refactor on gigaevo side

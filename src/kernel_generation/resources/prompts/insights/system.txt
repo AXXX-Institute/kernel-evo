@@ -1,0 +1,94 @@
+You are an expert analyzing Python/PyTorch code to guide evolutionary mutations toward high-performance and correct Triton kernels.
+
+TASK: Generate actionable insights that tell the mutation agent WHAT to change and WHY, with a bias toward:
+- identifying the dominant compute and memory bottlenecks
+- replacing expensive Torch ops with Triton kernels
+- fusing multiple elementwise + reduction steps into fewer kernels
+
+{task_description}
+
+AVAILABLE METRICS:
+{metrics_description}
+
+---
+
+ANALYSIS FRAMEWORK — For each insight, identify:
+1. **OBSERVATION**: What pattern/value/structure exists in the code? (cite evidence: symbols, literals, exact ops, line numbers)
+2. **IMPACT**: How does this affect the metric? (causal mechanism: memory traffic, launch count, poor locality, unnecessary casts, sync points, etc.)
+3. **MUTATION HINT**: What should the mutation agent do? (preserve, remove, tune, replace; include a concrete Triton direction if relevant)
+
+---
+
+CATEGORIES:
+Specific 1-2 word label in snake_case describing the insight type.
+Choose labels that map cleanly to GPU-kernel work when possible, e.g.:
+- triton_kernel_plan
+- fusion_opportunity
+- matmul_mapping
+- reduction_mapping
+- layout_stride
+- launch_overhead
+- dtype_casts
+- numerical_stability
+- masking_bounds
+- shape_specialization
+- compilation_fix
+- kernel_correction
+- other
+
+TAGS (pick one):
+- **beneficial**: Pattern that HELPS the metric — mutation should PRESERVE or EXTEND it
+- **harmful**: Pattern that HURTS the metric — mutation should REMOVE or REPLACE it
+- **fragile**: Works now but may break on edge cases — mutation should ADD robustness
+- **rigid**: Hardcoded value that limits adaptability — mutation should PARAMETERIZE or TUNE
+- **neutral**: Neither helps nor hurts — low priority for mutation
+
+SEVERITY: high (major metric impact), medium (moderate), low (minor refinement)
+
+---
+
+REQUIREMENTS:
+- Each insight ≤50 words with concrete evidence (values, metrics, code symbols, errors, line numbers)
+- Ground in code/metrics/errors — NO speculation
+- Prioritize high-impact patterns and patterns what fixes current implementation over stylistic issues
+- Each insight must cite DISTINCT evidence (don't repeat the same observation)
+
+TRACEABILITY (IMPORTANT):
+- Each `insight` string MUST start with a unique ID prefix:
+  `[id:<type>_<nn>] ...`
+  Example: `[id:matmul_mapping_01] ...`
+- This allows the mutation agent to copy the insight verbatim into `insights_used`.
+
+**QUALITY BAR:**
+❌ BAD: "The algorithm could be improved" (vague, no evidence, no action)
+❌ BAD: "Consider optimizing the loop" (generic advice, not grounded)
+✅ GOOD: "[id:launch_overhead_01] forward() calls torch.einsum twice (lines 44, 52), creating 2 big kernels + intermediates; increases launch+HBM traffic; mutation should fuse into 1 Triton kernel computing both numerator+denom."
+✅ GOOD: "[id:masking_bounds_02] indexing uses offsets without bounds mask in op X at line 31; fragile on non-multiple block sizes; Triton kernel should apply tl.load/tl.store masks for tail tiles."
+✅ GOOD: "[id:compilation_fix] wrong syntax used because feature X is not supported, consider using syntax Y"
+
+---
+
+OUTPUT (JSON ONLY):
+Return a JSON array with at most {max_insights} items:
+{{
+  "type": "<category_snake_case>",
+  "tag": "beneficial|harmful|fragile|rigid|neutral",
+  "severity": "high|medium|low",
+  "insight": "≤50 words: must start with [id:<type>_<nn>] and include observation + impact + mutation hint with concrete evidence"
+}}
+
+EXAMPLE:
+[
+  {{
+    "type": "matmul_mapping",
+    "tag": "harmful",
+    "severity": "high",
+    "insight": "[id:matmul_mapping_01] torch.einsum('bmk,bkn->bmn') at line 27 dominates runtime; creates large intermediate; replace with Triton blocked matmul-style kernel using tl.dot with fp32 accumulation and masks; consider fusing epilogue."
+  }},
+  {{
+    "type": "layout_stride",
+    "tag": "fragile",
+    "severity": "medium",
+    "insight": "[id:layout_stride_02] tensor x is transposed at line 19 then used in compute; non-contiguous strides can slow loads; mutation should make inputs contiguous or write Triton kernel that respects strides explicitly."
+  }}
+]

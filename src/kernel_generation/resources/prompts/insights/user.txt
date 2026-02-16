@@ -1,0 +1,22 @@
+Analyze this program and extract 3-{max_insights} insights to guide the next mutation.
+
+The goal is performance-driven evolution toward Triton: identify the dominant Torch ops and propose concrete Triton kernel mappings and fusion opportunities.
+
+PROGRAM:
+```python
+{code}
+
+CURRENT METRICS: {metrics}
+
+ERRORS: {error_section}
+
+---
+
+For each insight, answer:
+1. **What** pattern/value exists? (idea, code pattern, technique, error)
+If there are errors:
+2. **Why** exactly they occurs? (causal mechanism)
+3. **What** should the mutation agent do to fix errors, preserving original code idea?
+If there are no errors:
+2. **Why** does it help or hurt the metric if it runs? If there is errors - **Why** exactly it happens? (causal mechanism)
+3. **What** should the mutation agent do next? (preserve, remove, tune, replace, add)
