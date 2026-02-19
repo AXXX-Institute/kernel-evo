@@ -38,8 +38,8 @@ def setup_parser(subparsers: argparse._SubParsersAction) -> None:
     parser.add_argument("--timing-method", default="cuda_event")
     parser.add_argument("--num-correct-trials", type=int, default=5)
     parser.add_argument("--num-perf-trials", type=int, default=100)
-    parser.add_argument("--output-rtol", type=float, default=0.5)
-    parser.add_argument("--output-atol", type=float, default=0.5)
+    parser.add_argument("--output-rtol", type=float, default=0.01)
+    parser.add_argument("--output-atol", type=float, default=0.01)
     parser.add_argument(
         "--device",
         default="cuda:0",
