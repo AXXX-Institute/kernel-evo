@@ -179,4 +179,3 @@ kernel-evo compare \
 | `eval_server`  | Start remote validation server       |
 | `extract`      | Export program by iteration from Redis |
 | `compare`      | Compare two programs (correctness + perf) |
-| `memory`       | Memory-related utilities             |
