@@ -1,0 +1,203 @@
+
+### Goal
+Evolve a program that is **Python source code** implemented in torch.nn.Module interface.
+The code must:
+- Be correct (matches the reference outputs)
+- Be more efficient (lower runtime than the reference on GPU)
+- Use triton backend as primary framework for kernel implementation
+- Efficient implementation primary for fp16 precision, so you can use type specific optimizations
+
+### Output / parsing rules (IMPORTANT)
+Many prompts in this workflow are **machine-parsed**. Follow the requested format exactly:
+- If the prompt asks for JSON: output **raw JSON only** (no markdown fences, no extra text, no extra keys).
+- If the prompt asks for code inside a JSON field (e.g., `code`): put **only valid Python** in that field (no markdown).
+
+### Performance target (Triton-first)
+- Replace dominant Torch ops (e.g., einsum/matmul/reductions + elementwise chains) with backend kernels.
+- Prefer fusion: fewer kernel launches, fewer intermediate tensors, fewer full passes over HBM-resident tensors.
+- For Triton: use masked `tl.load`/`tl.store` for tail tiles, prefer matmul-style blocking (`tl.dot`) for GEMM-like work,
+  and accumulate sensitive reductions/dot products in fp32 (cast at the end).
+
+### Insight traceability (IMPORTANT)
+- Program insights will be prefixed with IDs like `[id:<type>_<nn>] ...`.
+- When asked for `insights_used`, copy the insight strings **verbatim**, including the `[id:...]` prefix.
+
+### Mutation justification expectation
+When asked for a justification, include a short **kernel plan**: which Torch ops were replaced, which kernels were added,
+what was fused, and why this reduces launches / memory traffic.
+
+### What your evolving program must do (IMPORTANT)
+Your evolving program is stored as `Program.code` and is evaluated *directly*.
+
+- Your program must be a **single self-contained Python module**.
+- It must define: `class ModelNew(torch.nn.Module): ...` and use same interface as the reference model
+
+### HARD REQUIREMENT: Backend compliance (submission validity)
+- Backend is `triton`.
+- Your program is INVALID unless it uses that backend *at least once* in the forward pass.
+- Defining backend code but never calling it is NON-COMPLIANT.
+- The backend call must contribute to the returned output (not a dead/no-op side call).
+
+#### NON-NEGOTIABLE TRITON COMPLIANCE GATE (submission invalid otherwise)
+- `import triton` and `import triton.language as tl`
+- at least one kernel decorated with `@triton.jit`
+- at least one kernel launch executed from `ModelNew.forward(...)` (e.g. `kernel[grid](...)`)
+- the Triton kernel output must contribute to the returned output (not a dead/no-op side call)
+
+Not sufficient:
+- importing Triton but never launching a kernel
+- defining a Triton kernel but never calling it
+- relying on `torch.compile` / Inductor without an explicit `@triton.jit` kernel
+
+
+During evaluation, the validator will call:
+`kernelbench.eval.eval_kernel_against_ref(ref_arch_src, program_code, backend=..., precision=...)`
+
+### IMPORTANT: Safe-mode restrictions on evolving program code
+Your evolving program is checked by GigaEvo safe-mode. Do NOT:
+- `import os`, `import sys`, or `import subprocess`
+- Use file I/O (e.g. `open(...)`, `.read()`, `.write()`, `.remove()`, `.unlink()`)
+
+### Reference model source code
+<<<REF_MODEL_CLASS_BEGIN>>>
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+
+
+class DPFP:
+    """
+    Deterministic Positive Feature Projection (as used in `language_modeling.py`).
+    in (..., d)
+    out (..., 2 * nu * d).
+    """
+
+    def __init__(self, nu: int):
+        self.nu = int(nu)
+
+    def __call__(self, x: torch.Tensor) -> torch.Tensor:
+        nu = self.nu
+        x = torch.cat([F.relu(x), F.relu(-x)], dim=-1)
+        x_rolled = torch.cat([x.roll(shifts=j, dims=-1) for j in range(1, nu + 1)], dim=-1)
+        x_repeat = torch.cat([x] * nu, dim=-1)
+        return x_repeat * x_rolled
+
+
+class Model(nn.Module):
+    """
+    Standalone benchmark wrapper for `AssociativeLayerWrapper.associate(...)`.
+
+    This isolates `language_modeling.py:108-129` into a self-contained module:
+      - in: hidden_states (bsz, seq_len, d_model)
+      - out: hidden_states (bsz, seq_len, d_model)
+    """
+
+    def __init__(self, d_model: int, d_mem: int, n_heads: int, use_denom: bool, nu: int, batch_size: int = 1):
+        super().__init__()
+
+        # Default shapes (tuned to be non-trivial but GPU/CI-friendly).
+        self.d_model = d_model
+        self.d_mem = d_mem
+        self.n_heads = n_heads
+        self.use_denom = bool(use_denom)
+        self.nu = nu
+
+        assert self.d_model % self.n_heads == 0
+        assert self.d_mem % self.n_heads == 0
+
+        self.d_key = 2 * self.nu * self.d_mem
+
+        self.phi = DPFP(self.nu)
+        self.W_mq = nn.Linear(self.d_model, self.d_mem, bias=False)
+
+        # Persistent memory tensors required by associate(). In the original code these
+        # are updated by `update_mem(...)` and become batch-shaped. For this benchmark
+        # we initialize them directly with the batch dimension.
+        #
+        # Shapes expected by einsums in associate():
+        # - W_mem: (bsz, n_heads, d_key/n_heads, d_model/n_heads)
+        # - z:     (bsz, n_heads, d_key/n_heads)
+        W_mem = (
+            torch.randn(
+                batch_size,
+                self.n_heads,
+                self.d_key // self.n_heads,
+                self.d_model // self.n_heads,
+            )
+            * 0.01
+        )
+        # Buffer (not a Parameter): should follow model.to(device, dtype)
+        self.register_buffer("W_mem", W_mem, persistent=False)
+        if self.use_denom:
+            # DPFP output is non-negative; keep denom positive and away from 0.
+            z = torch.ones(batch_size, self.n_heads, self.d_key // self.n_heads)
+            self.register_buffer("z", z, persistent=False)
+
+    def _to_heads(self, x: torch.Tensor) -> torch.Tensor:
+        bsz, seq_len, d = x.shape
+        x = x.reshape(bsz, seq_len, self.n_heads, d // self.n_heads)
+        x = x.permute(0, 2, 1, 3)
+        return x
+
+    def _from_heads(self, x: torch.Tensor) -> torch.Tensor:
+        bsz, n_heads_, seq_len, d_head = x.shape
+        x = x.permute(0, 2, 1, 3).reshape(bsz, seq_len, n_heads_ * d_head)
+        return x
+
+    # Isolated from `language_modeling.py:108-129` (minimal edits: none).
+    def associate(self, hidden_states: torch.Tensor) -> torch.Tensor:
+        bsz, seq_len, d_model_ = hidden_states.shape
+
+        # Ensure internal memory tensors match input device + dtype (e.g. fp16 on CUDA).
+        if self.W_mem.device != hidden_states.device or self.W_mem.dtype != hidden_states.dtype:
+            self.W_mem = self.W_mem.to(device=hidden_states.device, dtype=hidden_states.dtype)
+        if self.use_denom:
+            if self.z.device != hidden_states.device or self.z.dtype != hidden_states.dtype:
+                self.z = self.z.to(device=hidden_states.device, dtype=hidden_states.dtype)
+
+        q = self._to_heads(self.W_mq(hidden_states))
+        mq = self.phi(q)  # (bsz, n_heads, seq_len, 2 * d_head * nu)
+        mq = F.normalize(mq, dim=-1, p=2.0)
+
+        num = torch.einsum("ihjk,ihkt->ihjt", mq, self.W_mem)
+        if self.use_denom:
+            denom = torch.einsum("ihk,ihjk->ihj", self.z, mq)[..., None] + 1e-5
+            hidden_states = num / denom  # (bsz, n_heads, seq_len, d_model // n_heads)
+        else:
+            hidden_states = num
+        hidden_states = self._from_heads(hidden_states)
+        return hidden_states
+
+    def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
+        return self.associate(hidden_states)
+
+
+# Benchmark sizes / defaults (KernelBench-style globals)
+<<<REF_MODEL_CLASS_END>>>
+
+### Reference inputs/init (NOT part of your generated code)
+<<<REF_INPUTS_INIT_BEGIN>>>
+batch_size = 8
+seq_len = 1024
+d_model = 4096
+n_heads = 8
+d_mem = 64
+nu = 3
+use_denom = True
+
+# Optional correctness tolerances for KernelBench evaluator.
+# If set to floats (non-None), KernelBench will use these instead of its precision-based defaults.
+output_rtol = 0.5
+output_atol = 0.5
+
+
+def get_inputs():
+    hidden_states = torch.rand(batch_size, seq_len, d_model)
+    return [hidden_states]
+
+
+def get_init_inputs():
+    # (self, d_model: int, d_mem: int, n_heads: int, use_denom: bool, nu: int):
+    return [d_model, d_mem, n_heads, use_denom, nu, batch_size]
+<<<REF_INPUTS_INIT_END>>>
+

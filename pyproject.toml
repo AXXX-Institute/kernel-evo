@@ -2,15 +2,17 @@
 #   pip install -e . --ignore-requires-python
 
 [project]
-name = "kernel-generation"
+name = "kernel-evo"
 version = "0.1.0"
-description = "Evolutional Generation for efficient kernels"
+description = "Evolutionary Generation for efficient kernels"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
-    # "gigaevo @ file:///home/sivtsov/gigaevo-core-internal",
-    "gigaevo @ git+https://github.com/KhrulkovV/gigaevo-core-internal.git@svtdanny/kernel-generation-minimized",
+    "gigaevo @ git+https://github.com/KhrulkovV/gigaevo-core-internal.git@svtdanny/prompt-dir",
     "kernelbench @ git+https://github.com/ScalingIntelligence/KernelBench.git",
+
+    "json_repair",
+    "fastapi", # eval server
 
     "cma", # gigaevo. TODO: refactor on gigaevo side
     # memory. TODO: refactor on gigaevo side
@@ -20,8 +22,25 @@ dependencies = [
     "sentence_transformers",
 ]
 
+[project.scripts]
+kernel-evo = "kernel_evo.cli:main"
+
 [tool.setuptools]
 package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["kernel_evo*"]
+
+[tool.setuptools.package-data]
+kernel_evo = [
+    "resources/*.yaml",
+    "resources/*.txt",
+    "resources/config/**/*",
+    "resources/prompts/**/*",
+    "resources/gigaevo/run.py",
+    "resources/gigaevo/config/**/*",
+]
 
 [dependency-groups]
 dev = [

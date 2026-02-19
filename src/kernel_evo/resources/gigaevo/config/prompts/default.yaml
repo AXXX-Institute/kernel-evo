@@ -1,0 +1,7 @@
+# @package _global_
+# Optional override directory for agent prompt templates.
+# Same layout as gigaevo/prompts: subdirs per agent (insights, mutation, lineage, scoring)
+# Set to kernel-evo prompts (required: gigaevo package does not ship prompt files).
+# When running from project root: hydra:runtime.cwd is the repo root.
+# Override from CLI if needed: prompts.dir=/path/to/prompts
+dir: ${oc.env:KERNEL_EVO_PROMPTS_DIR}

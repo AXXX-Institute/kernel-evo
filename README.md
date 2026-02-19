@@ -1,42 +1,84 @@
-# Kernel generation
+# KernelEvo
+<div align="center">
+  <img src="logo/banner.svg" alt="Kernel Evo banner" />
+</div>
 
-## installation
+**Evolutionary generation of efficient GPU kernels** using [GigaEvo](https://github.com/KhrulkovV/gigaevo-core-internal).  
+Define a task, run evolution with an LLM backend, extract and compare optimized programs.
 
-```
-https://github.com/svtdanny/kernel_generation.git
-cd kernel_generation
+---
+
+## Features
+
+- **Custom tasks** — Define your own kernel tasks in KernelBench format and evolve them.
+- **KernelBench integration** — Use existing [KernelBench](https://github.com/ScalingIntelligence/KernelBench) problems.
+- **Remote or local execution** — Run validation locally or via a remote eval server.
+---
+
+## Requirements
+
+- **Python** >= 3.12
+- **LLM API** — OpenAI-compatible (e.g. [OpenRouter](https://openrouter.ai), or a local server like SGLang).  
+- **Redis** — Used by GigaEvo for experiment state.
+
+---
+
+## Installation
+
+### From source
+
+```bash
+git clone https://github.com/svtdanny/kernel_evo.git
+cd kernel_evo
 pip install -e . --ignore-requires-python
 ```
 
-For custom branches of gigaevo, kernelbench see `pyproject.toml`
+> **Note:** `--ignore-requires-python` relaxes the Python version check (KernelBench may declare 3.10 but works on 3.12).  
+> For custom branches of `gigaevo` or `kernelbench`, edit the Git URLs in `pyproject.toml`.
 
-## Custom kernel
+### Docker
 
-To evolve your own kernel, you need to create task in KernelBench format.  
-See example in `tasks/armt_associate`:
+Pull and run (when a pre-built image is published):
+
+```bash
+docker pull svtdanny/kernel-evo:latest
+docker run --rm kernel-evo:latest kernel-evo --help
+```
+
+To build the image yourself (e.g. for private dependencies or development), see **[build/README.md](build/README.md)**.
+
+---
+
+## Custom kernel task
+
+To evolve your own kernel, create a task in **KernelBench format**. Example layout:
+
 ```
 tasks/
 └── armt_associate/
-    ├── task.py
-    └── tests/
-        └── test_task.py
+    └── task.py
 ```
 
-Or you can use existing task from KernelBench (see run scripts below)
+See `tasks/armt_associate` in this repo for a reference. You can also use any existing task from [KernelBench](https://github.com/ScalingIntelligence/KernelBench).
 
-## Run
+---
 
-Can be evolved with local or remote model (in example, sglang_server and openrouter were used)
+## Run evolution
 
-### With custom kernel
+Evolution can use a **local** or **remote** LLM (e.g. SGLang, OpenRouter). Examples below use OpenRouter and a remote eval server.
 
-Run in different terminal:    
+### 1. Start the eval server (optional, for remote validation)
+
+In a separate terminal:
+
+```bash
+kernel-evo eval_server --port 15000
 ```
-python3 -m kernel_generation eval_server --port 15000
-```
 
-```
-OPENAI_API_KEY="sk-or-v1-" python3 -m kernel_generation evolve \
+### 2. Evolve with a custom task
+
+```bash
+OPENAI_API_KEY="sk-or-v1-..." kernel-evo evolve \
   --problem-path tasks/armt_associate/task.py \
   --experiment-name custom_associate \
   --backend triton \
@@ -48,30 +90,19 @@ OPENAI_API_KEY="sk-or-v1-" python3 -m kernel_generation evolve \
   --max-mutations-per-generation 1 \
   --validator-debug --validator-debug-dir outputs/validate_logs \
   --llm-log-dir outputs/traces --llm-log-port 14005 \
-  --stdout-dir outputs/logs --disable-insights-lineage --execution-mode remote_execution
+  --stdout-dir outputs/logs --disable-insights-lineage \
+  --execution-mode remote_execution
 ```
 
-<!-- ```
-OPENAI_API_KEY=EMPTY python3 scripts/generate_and_eval_single_sample_gigaevo.py \
-  --problem-path tasks/armt_associate/task.py \
-  --backend triton \
-  --precision fp16 \
-  --max-tokens 64000 \
-  --model-name Qwen/Qwen3-Next-80B-A3B-Thinking-FP8 \
-  --llm-base-url http://127.0.0.1:30000/v1 \
-  --redis-db 2 \
-  --max-generations 40 \
-  --max-mutations-per-generation 2 \
-  --validator-debug --validator-debug-dir <dir_for_validations_debug> --llm-log-dir <dir_for_logs>
-``` -->
+### 3. Evolve with a KernelBench task
 
-### With KernelBench task
-
-```
-OPENAI_API_KEY=<KEY> python3 -m kernel_generation evolve \
+```bash
+OPENAI_API_KEY="<KEY>" kernel-evo evolve \
   --level 1 \
   --problem-id 36 \
+  --experiment-name kb_level1_36 \
   --dataset-src huggingface \
+  --dataset-name ScalingIntelligence/KernelBench \
   --backend triton \
   --precision fp16 \
   --model-name <MODEL> \
@@ -79,41 +110,55 @@ OPENAI_API_KEY=<KEY> python3 -m kernel_generation evolve \
   --redis-db 2 \
   --max-generations 10 \
   --max-mutations-per-generation 2 \
-  --validator-debug --validator-debug-dir <dir_for_validations_debug> --llm-log-dir <dir_for_logs>
+  --validator-debug --validator-debug-dir <dir_for_validations_debug> \
+  --llm-log-dir <dir_for_logs>
 ```
 
+---
 
 ## Monitor progress
 
-```
-cd gigaevo/outputs/<DATE>/<EXPERIMENT_START>  
+```bash
+cd gigaevo/outputs/<DATE>/<EXPERIMENT_START>
 tensorboard --logdir .
 ```
 
-## Extract program with given id 
-__Ps:__ use tensorboard to see iterations with good performance
+Use TensorBoard to find iterations with good performance before extracting programs.
 
+---
+
+## Extract a program
+
+Export the program from a specific iteration (e.g. after inspecting TensorBoard):
+
+```bash
+kernel-evo extract \
+  --redis-db 2 \
+  --iteration 8 \
+  --redis-prefix "kernel_evo" \
+  --output-file prog8.py
 ```
-python3 -m kernel_generation extract --redis-db 2 --iteration 8 --redis-prefix "kernel_generation" --output-file prog8.py
-```
+
+---
 
 ## Compare two programs
 
 ### Custom task
 
-```
-python3 -m kernel_generation compare \
+```bash
+kernel-evo compare \
   --program-a prog_a.py \
   --program-b prog_b.py \
   --problem-path tasks/armt_associate/task.py \
   --backend triton \
-  --precision fp16 --num-perf-trials 300
+  --precision fp16 \
+  --num-perf-trials 300
 ```
 
-### Kernel bench task
+### KernelBench task
 
-```
-python3 -m kernel_generation compare \
+```bash
+kernel-evo compare \
   --program-a prog_a.py \
   --program-b prog_b.py \
   --dataset-src huggingface \
@@ -123,3 +168,15 @@ python3 -m kernel_generation compare \
   --backend triton \
   --precision fp16
 ```
+
+---
+
+## CLI overview
+
+| Command         | Description                          |
+|----------------|--------------------------------------|
+| `evolve`       | Run evolution (custom or KernelBench) |
+| `eval_server`  | Start remote validation server       |
+| `extract`      | Export program by iteration from Redis |
+| `compare`      | Compare two programs (correctness + perf) |
+| `memory`       | Memory-related utilities             |

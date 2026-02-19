@@ -1,3 +1,0 @@
-# Resolved at runtime from package location (set by kernel_generation when invoking run.py).
-# Requires KERNEL_GENERATION_PROMPTS_DIR to be set (e.g. by evolve command).
-dir: ${oc.env:KERNEL_GENERATION_PROMPTS_DIR}

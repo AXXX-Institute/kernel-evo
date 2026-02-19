@@ -1,0 +1,20 @@
+# @package _global_
+#
+# KernelGeneration pipeline: treat Program.code as the final artifact (no entrypoint),
+# but still build + pass context to the validator via context.py.
+#
+
+evolution_context:
+  _target_: gigaevo.entrypoint.evolution_context.EvolutionContext
+  problem_ctx: ${problem_context}
+  llm_wrapper: ${llm}
+  storage: ${ref:redis_storage}
+  prompts_dir: ${prompts.dir}
+
+pipeline_builder:
+  _target_: kernel_evo.core.pipeline.builders.DirectCodeContextPipelineBuilder
+  ctx: ${evolution_context}
+
+dag_blueprint:
+  _target_: gigaevo.config.helpers.build_dag_from_builder
+  builder: ${pipeline_builder}

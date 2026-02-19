@@ -1,0 +1,9 @@
+# Primary Hydra config for kernel-evo (defaults provided by gigaevo config via searchpath).
+defaults:
+  - experiment: base
+  - _self_
+
+# Problem metadata (set via command line from evolve)
+problem:
+  name: ???
+  dir: ${hydra:runtime.cwd}/problems/${problem.name}

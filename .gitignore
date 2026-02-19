@@ -1,3 +1,9 @@
 .ruff_cache/
 __pycache__/
 *.egg-info/
+.python-version
+*.pyc
+
+# local state folders
+outputs
+./memory

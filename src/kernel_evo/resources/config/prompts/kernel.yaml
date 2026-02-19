@@ -1,0 +1,3 @@
+# Resolved at runtime from package location (set by kernel_evo when invoking run.py).
+# Requires KERNEL_EVO_PROMPTS_DIR to be set (e.g. by evolve command).
+dir: ${oc.env:KERNEL_EVO_PROMPTS_DIR}
