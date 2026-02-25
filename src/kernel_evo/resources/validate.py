@@ -144,7 +144,7 @@ def run_local_validation(
     if not torch.cuda.is_available():
         raise ValueError("CUDA is not available")
 
-    backend = str(cfg.get("backend", "cuda"))
+    backend = str(cfg.get("backend", "triton"))  # supported: triton, cuda_inline only
     precision_str = str(cfg.get("precision", "fp32"))
     timing_method = str(cfg.get("timing_method", "cuda_event"))
     device_str = str(cfg.get("device", "cuda"))
@@ -177,7 +177,19 @@ def run_local_validation(
                 output_rtol=output_rtol,
                 output_atol=output_atol,
                 device=device,
+                run_cfg=cfg,
             )
+            # eval can return None (e.g. lock/file errors); treat as compilation failure
+            if result is None:
+                from kernel_evo.core.eval.eval import KernelExecResult
+                result = KernelExecResult(
+                    compiled=False,
+                    metadata={
+                        "compilation_error": RuntimeError(
+                            "Evaluation returned no result (e.g. lock or transient error)"
+                        ),
+                    },
+                )
             if not result.compiled:
                 logger.error(f"[TRACEDEB_USER] Compilation error: {result.metadata}")
                 raise result.metadata["compilation_error"]

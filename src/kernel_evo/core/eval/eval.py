@@ -351,7 +351,7 @@ def _process_input_tensor(input, device, backend="cuda", precision=torch.float32
     Args:
         input: Input tensor or non-tensor value
         device: Target CUDA device
-        backend: Backend type (e.g., 'cuda', 'triton', 'cute')
+        backend: Backend type ('triton' or 'cuda_inline')
         precision: torch.dtype
     Returns:
         Processed tensor on correct device with correct dtype, or original value if not a tensor
@@ -381,10 +381,11 @@ def eval_kernel_against_ref(
     device: Union[torch.device, int] = (
         torch.cuda.current_device() if torch.cuda.is_available() else None
     ),  # have to run on GPU
-    backend: str = "cuda",  # can be 'cuda', 'triton', 'tilelang', or 'cute'
+    backend: str = "triton",  # supported: 'triton', 'cuda_inline'
     precision: torch.dtype = torch.float32,
     output_rtol: Optional[float] = None,
     output_atol: Optional[float] = None,
+    run_cfg: Optional[dict] = None,  # optional; used e.g. for cuda_inline arch_list
     # Guard against potential reward hacking [optional but ongoing enhancement]
     check_for_excessive_speedup: bool = True,
     excessive_speedup_threshold: float = 10,  # flag if the kernel is more than <excessive_speedup_threshold>x faster than the reference  # noqa: E501
@@ -398,8 +399,8 @@ def eval_kernel_against_ref(
     num_correct_trials: number of trials to initialize different random inputs; correctness pass only if all trials pass
     num_perf_trials: run the evalutation many times to take the average
     device: GPU (cuda) device to run the evalutation on
-    backend: str, one of 'cuda', 'triton', 'tilelang', or 'cute'
-    precision: torch.dtype for computation (note: tilelang only supports fp16)
+    backend: str, one of 'triton' or 'cuda_inline'
+    precision: torch.dtype for computation
     timing_method: str, method to time kernel, see timing.py for more details
 
     ONGOING EFFORT to refactor and modularize this, and adding more tests for eval.
@@ -407,8 +408,7 @@ def eval_kernel_against_ref(
     # TODO: check device is busy
     assert torch.cuda.is_available(), "CUDA is not available, cannot run Eval"
 
-    if backend.lower() == "tilelang":
-        assert precision == torch.float16 or precision == torch.bfloat16, "TileLang only supports fp16 or bfloat16"
+    assert backend.lower() in ("triton", "cuda_inline"), f"Unsupported backend: {backend} (only triton, cuda_inline)"
 
     torch.set_printoptions(
         precision=4,  # Decimal places
@@ -420,9 +420,8 @@ def eval_kernel_against_ref(
     # set CUDA device
     torch.cuda.set_device(device)
 
-    # Backends that use tempfile approach and need CUDA_VISIBLE_DEVICES
-    # TileLang, Triton, and CuTe all use tempfile for proper module loading
-    uses_tempfile = backend.lower() in ["triton", "tilelang", "cute"]
+    # Both supported backends use tempfile for proper module loading
+    uses_tempfile = backend.lower() in ["triton", "cuda_inline"]
 
     metadata = {}  # for storing result metadata
     metadata["hardware"] = torch.cuda.get_device_name(device=device)
@@ -480,13 +479,11 @@ def eval_kernel_against_ref(
         # add hash for later to distinguish between multi-turn kernels
 
         backend_lower = backend.lower()
-        if backend_lower in ["triton", "tilelang", "cute"]:
-            # Use tempfile approach for triton, tilelang, and cute
-            # These DSLs require proper module import for JIT decorators to work
-            ModelNew, tempfile = load_custom_model_with_tempfile(custom_model_src, entry_point="ModelNew")
-        else:
-            # Default CUDA backend
-            ModelNew = load_custom_model(custom_model_src, context, build_dir)
+        if backend_lower == "cuda_inline" and run_cfg:
+            from kernel_evo.core.code.cuda_backend_utils import apply_cuda_arch_env
+            apply_cuda_arch_env(run_cfg)
+        # Both triton and cuda_inline use tempfile (JIT decorators or load_inline)
+        ModelNew, tempfile = load_custom_model_with_tempfile(custom_model_src, entry_point="ModelNew")
         torch.cuda.synchronize(device=device)  # not sure if this is too much
     except Exception as e:
         print(f"Failed to compile custom CUDA kernel: Record as compilation failure. \nError: {e}")

@@ -9,15 +9,15 @@ REF_INPUTS_BEGIN = "<<<REF_INPUTS_INIT_BEGIN>>>"
 REF_INPUTS_END = "<<<REF_INPUTS_INIT_END>>>"
 
 
+# Only these backends are supported. cpp/cuda/torch are not variants.
 PYTHON_BACKENDS: set[str] = {
-    # KernelBench python-driven backends
     "triton",
-    "tilelang",
-    "cute",
-    "thunderkittens",
-    # Optional convenience alias (not necessarily supported by KernelBench evaluator)
-    "torch",
+    "cuda_inline",  # Python + torch.utils.cpp_extension.load_inline (compile C++/CUDA on the fly)
 }
+
+# Backends that may use a separate prompt directory (e.g. resources/prompts/<backend>/ or per-run prompts).
+# cuda_inline and future backends can override task description / prompts via this convention.
+BACKENDS_WITH_SEPARATE_PROMPT_DIR: set[str] = {"cuda_inline"}
 
 
 def is_python_backend(backend: str) -> bool:
@@ -166,6 +166,10 @@ def _backend_compliance_block(run_cfg: dict[str, Any]) -> str:
             "- defining a Triton kernel but never calling it\n"
             "- relying on `torch.compile` / Inductor without an explicit `@triton.jit` kernel\n"
         )
+
+    if backend == "cuda_inline":
+        from kernel_evo.core.code.cuda_backend_utils import get_cuda_inline_compliance_block
+        return get_cuda_inline_compliance_block(run_cfg)
 
     return base
 

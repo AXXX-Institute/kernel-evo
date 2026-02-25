@@ -7,7 +7,7 @@ import time
 from pathlib import Path
 from typing import Any
 from kernel_evo.resources.paths import get_resources_dir
-from kernel_evo.resources.prompt_loader import get_prompts_dir
+from kernel_evo.resources.prompt_loader import prepare_prompts_for_experiment
 
 
 class Tee:
@@ -100,23 +100,18 @@ def run_evolve(args: Any) -> None:
         problem_kind = "kernelbench"
 
     task_path = problem_dir / "task_description.txt"
-    from kernel_evo.core.code import cpp_backend_utils as _cpp_utils
     from kernel_evo.core.code import python_backend_utils as _py_utils
 
-    _is_cpp_backend = _cpp_utils.is_cpp_backend
-    _is_python_backend = _py_utils.is_python_backend
     split_kernelbench_ref = _py_utils.split_kernelbench_ref
-
-    model_src, inputs_src = split_kernelbench_ref(ref_arch_src)
+    if str(args.backend).lower() not in _py_utils.PYTHON_BACKENDS:
+        raise ValueError(
+            f"Unsupported backend: {args.backend}. Only triton and cuda_inline are supported; cpp/cuda/torch are not variants."
+        )
 
     backend = str(args.backend).lower()
-    if str(args.codegen_kind).lower() == "auto":
-        codegen_kind = "cpp" if _is_cpp_backend(backend) else "python"
-    else:
-        codegen_kind = str(args.codegen_kind).lower()
-        if codegen_kind == "python" and not _is_python_backend(backend):
-            # Allow forcing, but keep a gentle safeguard for obvious mismatches.
-            pass
+    codegen_kind = "python"  # only triton and cuda_inline are supported
+
+    model_src, inputs_src = split_kernelbench_ref(ref_arch_src)
 
     formatted_time = time.strftime("%Y%m%d_%H%M%S")
     if args.problem_path:
@@ -131,6 +126,12 @@ def run_evolve(args: Any) -> None:
         args.validator_debug_dir = str(experiment_dir / LOG_SUBDIR_VALIDATE)
         args.llm_log_dir = str(experiment_dir / LOG_SUBDIR_TRACES)
         args.tensorboard_dir = str(experiment_dir / LOG_SUBDIR_TENSORBOARD)
+        # Create experiment dir and subdirs (traces, validate_logs, tensorboard) so they exist
+        # even if proxy is started later; traces is written when using --llm-log-port.
+        experiment_dir.mkdir(parents=True, exist_ok=True)
+        (experiment_dir / LOG_SUBDIR_TRACES).mkdir(exist_ok=True)
+        (experiment_dir / LOG_SUBDIR_VALIDATE).mkdir(exist_ok=True)
+        (experiment_dir / LOG_SUBDIR_TENSORBOARD).mkdir(exist_ok=True)
 
     if str(args.stdout_dir).strip():
         stdout_dir = Path(args.stdout_dir).expanduser().resolve()
@@ -167,43 +168,35 @@ def run_evolve(args: Any) -> None:
         "remote_validator_url": str(args.remote_validator_url),
         "remote_poll_interval": float(args.remote_poll_interval),
         "use_memory_for_errors": bool(args.use_memory_for_errors),
+        "arch_list": str(getattr(args, "arch_list", "") or "").strip() or None,
     }
+    if run_cfg["arch_list"] is None:
+        del run_cfg["arch_list"]
     (problem_dir / "run_config.json").write_text(
         json.dumps(run_cfg, ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
 
-    # Write the initial prompt shown to the mutation LLM (ALL context included here)
-    if codegen_kind == "cpp":
-        from kernel_evo.core.code.cpp_backend_utils import (
-            build_task_description_cpp,
-            seed_program_cpp_stub,
-        )
+    # Write the initial prompt shown to the mutation LLM (ALL context included here).
+    # cuda_inline and future backends may use a separate prompt directory (see python_backend_utils.BACKENDS_WITH_SEPARATE_PROMPT_DIR).
+    from kernel_evo.core.code.python_backend_utils import (
+        build_task_description_python,
+        model_to_modelnew,
+    )
 
-        task_path.write_text(
-            build_task_description_cpp(run_cfg=run_cfg, ref_arch_src=ref_arch_src),
-            encoding="utf-8",
-        )
-        seed_program_code = seed_program_cpp_stub()
-    else:
-        from kernel_evo.core.code.python_backend_utils import (
-            build_task_description_python,
-            model_to_modelnew,
-        )
-
-        task_text = build_task_description_python(
-            run_cfg=run_cfg,
-            ref_arch_src=ref_arch_src,
-            ref_model_class_src=model_src,
-            ref_inputs_init_src=inputs_src,
-        )
-        if bool(args.validator_debug):
-            print(f"Task description (debug):\n\n{task_text}\n\n" + "=" * 100 + "\n\n")
-        task_path.write_text(
-            task_text,
-            encoding="utf-8",
-        )
-        seed_program_code = model_to_modelnew(model_src)
+    task_text = build_task_description_python(
+        run_cfg=run_cfg,
+        ref_arch_src=ref_arch_src,
+        ref_model_class_src=model_src,
+        ref_inputs_init_src=inputs_src,
+    )
+    if bool(args.validator_debug):
+        print(f"Task description (debug):\n\n{task_text}\n\n" + "=" * 100 + "\n\n")
+    task_path.write_text(
+        task_text,
+        encoding="utf-8",
+    )
+    seed_program_code = model_to_modelnew(model_src)
 
     # Generate per-problem seed.py (direct python code; no entrypoint)
     _write_initial_seed(
@@ -272,7 +265,8 @@ def run_evolve(args: Any) -> None:
 
     searchpath = [f"file://{kg_config}", f"file://{config_dir}"]
 
-    prompts_dir = get_prompts_dir()
+    # Copy default prompts into experiment dir, then overlay backend-specific prompts (e.g. cuda_inline mutation).
+    prompts_dir = prepare_prompts_for_experiment(problem_dir, args.backend)
     cmd = [
         sys.executable,
         str(run_py),
@@ -327,7 +321,7 @@ def run_evolve(args: Any) -> None:
             env["PYTHONPATH"] = prefix
 
         # So prompts/kernel.yaml can use ${oc.env:KERNEL_EVO_PROMPTS_DIR}
-        env["KERNEL_EVO_PROMPTS_DIR"] = str(get_prompts_dir())
+        env["KERNEL_EVO_PROMPTS_DIR"] = str(prompts_dir)
         
         # If stdout_dir is set, we use Popen and manually tee the output from the subprocess.
         if str(args.stdout_dir).strip():

@@ -114,7 +114,12 @@ def setup_parser(subparsers: argparse.ArgumentParser) -> None:
     parser.add_argument("--level", type=int, default=None)
     parser.add_argument("--problem-id", type=int, default=None)
 
-    parser.add_argument("--backend", default="cuda", choices=["cuda", "triton", "tilelang", "cute"])
+    parser.add_argument(
+        "--backend",
+        default="triton",
+        choices=["triton", "cuda_inline"],
+        help="Supported backends only.",
+    )
     parser.add_argument("--precision", default="fp32", choices=["fp32", "fp16", "bf16"])
     parser.add_argument("--timing-method", default="cuda_event")
     parser.add_argument("--num-correct-trials", type=int, default=5)

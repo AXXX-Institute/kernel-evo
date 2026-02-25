@@ -25,14 +25,15 @@ def setup_parser(subparsers: argparse._SubParsersAction) -> None:
     # KernelBench evaluation
     parser.add_argument(
         "--backend",
-        default="cuda",
-        choices=["cuda", "triton", "tilelang", "cute", "thunderkittens"],
+        default="triton",
+        choices=["triton", "cuda_inline"],
+        help="Supported backends only; cpp/cuda/torch are not variants.",
     )
     parser.add_argument(
         "--codegen-kind",
         default="auto",
-        choices=["auto", "python", "cpp"],
-        help="Program template: auto = python for triton/tilelang/cute/thunderkittens, cpp for cuda.",
+        choices=["auto", "python"],
+        help="Program template: auto = python (only triton and cuda_inline are supported).",
     )
     parser.add_argument("--precision", default="fp32", choices=["fp32", "fp16", "bf16"])
     parser.add_argument("--timing-method", default="cuda_event")
@@ -44,6 +45,11 @@ def setup_parser(subparsers: argparse._SubParsersAction) -> None:
         "--device",
         default="cuda:0",
         help="Cuda device for validation. Written to run_config for validator.",
+    )
+    parser.add_argument(
+        "--arch-list",
+        default="",
+        help="Optional TORCH_CUDA_ARCH_LIST for cuda_inline backend (e.g. '8.0' or '7.0;8.0'). Written to run_config.",
     )
 
     # GigaEvo / infra

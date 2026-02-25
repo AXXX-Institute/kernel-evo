@@ -6,13 +6,20 @@
 **Evolutionary generation of efficient GPU kernels** using [GigaEvo](https://github.com/KhrulkovV/gigaevo-core-internal).  
 Define a task, run evolution with an LLM backend, extract and compare optimized programs.
 
----
+<div align="center">
+  <img src="logo/plotly_speedup_vs_time_level1_v2.gif" alt="Speedup vs time" width="49%" />
+  <img src="logo/plotly_speedup_vs_tokens_level2_v2.gif" alt="Speedup vs tokens" width="49%" />
+</div>
+
 
 ## Features
 
 - **Custom tasks** — Define your own kernel tasks in KernelBench format and evolve them.
 - **KernelBench integration** — Use existing [KernelBench](https://github.com/ScalingIntelligence/KernelBench) problems.
+- **Triton and CUDA inline backends** - two most popular ways to create kernels, suitable for different scenarious.
 - **Remote or local execution** — Run validation locally or via a remote eval server.
+- **Cost efficient** - works with fast models **gemini flash 3** and **gpt-oss-120b**. Current experiments costs **0.5-1$**. 
+Frontier models with high reasoning effort would be benefitial, yet cost would be magnitude higher.
 ---
 
 ## Requirements
@@ -179,3 +186,34 @@ kernel-evo compare \
 | `eval_server`  | Start remote validation server       |
 | `extract`      | Export program by iteration from Redis |
 | `compare`      | Compare two programs (correctness + perf) |
+
+---
+
+## Best practices
+
+
+### Model selection
+
+Evolution deeply depends on underlying model. 
+For better results, one should use frontier models, like gpt, claude or gemini. 
+
+Recomendation for best value vendor model:
+1. **gemini flash 3**. Capable, yet not very costly. It creates faulty kernels, but able to recover buggy code.
+
+Recomendation for opensource models:
+1. **gpt-oss-120b** - best baseline for kernel evolution. Good enough reasoning to recover faulty kernels.
+2. **GLM-5**. From all very large open llms, only one seems like knowing triton and generate decent kernels. Downside - slower on generation and very large for local inference.
+
+### Experiments
+
+Quality of result depends on starting seeds and can vary from different run. So make sense to restart and try again if solution is very bad during first 200k tokens.
+
+Also, we notised what triton is better on small efficient kernels, like softmax and matmuls. Just because it recuires less knowledge from model. For complex tasks like KernelBench level 2 difference is lower. 
+
+### Remote validation
+
+Better to run validation via validator server in different terminal. This way, one can see results.
+
+### Cheaper start
+
+Use flag `--disable-insights-lineage` to disable addtitional calls. Benefitial for short debug runs or with expensive models.
