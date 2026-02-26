@@ -35,8 +35,8 @@ Frontier models with high reasoning effort would be benefitial, yet cost would b
 ### From source
 
 ```bash
-git clone https://github.com/svtdanny/kernel_evo.git
-cd kernel_evo
+git clone https://github.com/AXXX-Institute/kernel-evo.git
+cd kernel-evo
 pip install -e . --ignore-requires-python
 ```
 
@@ -79,7 +79,7 @@ Evolution can use a **local** or **remote** LLM (e.g. SGLang, OpenRouter). Examp
 In a separate terminal:
 
 ```bash
-kernel-evo eval_server --port 15000
+kernel-evo eval-server --port 15000
 ```
 
 ### 2. Evolve with a custom task
@@ -183,7 +183,7 @@ kernel-evo compare \
 | Command         | Description                          |
 |----------------|--------------------------------------|
 | `evolve`       | Run evolution (custom or KernelBench) |
-| `eval_server`  | Start remote validation server       |
+| `eval-server`  | Start remote validation server       |
 | `extract`      | Export program by iteration from Redis |
 | `compare`      | Compare two programs (correctness + perf) |
 
