@@ -1,6 +1,6 @@
 # KernelEvo
 <div align="center">
-  <img src="logo/banner.svg" alt="Kernel Evo banner" />
+  <img src="logo/banner.png" alt="Kernel Evo banner" />
 </div>
 
 **Evolutionary generation of efficient GPU kernels** using [GigaEvo](https://github.com/KhrulkovV/gigaevo-core-internal).  
