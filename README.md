@@ -1,4 +1,3 @@
-# KernelEvo
 <div align="center">
   <img src="logo/banner.png" alt="Kernel Evo banner" />
 </div>
