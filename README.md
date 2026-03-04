@@ -6,8 +6,8 @@
 Define a task, run evolution with an LLM backend, extract and compare optimized programs.
 
 <div align="center">
-  <img src="logo/plotly_speedup_vs_time_level1_v2.gif" alt="Speedup vs time" width="49%" />
-  <img src="logo/plotly_speedup_vs_tokens_level2_v2.gif" alt="Speedup vs tokens" width="49%" />
+  <img src="logo/plotly_speedup_vs_tokens_level1_v3.gif" alt="Speedup vs tokens lvl 1" width="49%" />
+  <img src="logo/plotly_speedup_vs_tokens_level2_v3.gif" alt="Speedup vs tokens lvl 2" width="49%" />
 </div>
 
 
