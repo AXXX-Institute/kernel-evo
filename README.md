@@ -89,14 +89,13 @@ OPENAI_API_KEY="sk-or-v1-..." kernel-evo evolve \
   --experiment-name custom_associate \
   --backend triton \
   --precision fp16 \
-  --model-name openai/gpt-oss-120b \
+  --model-name <MODEL> \
   --llm-base-url https://openrouter.ai/api/v1 \
-  --redis-db 1 \
-  --max-generations 40 \
-  --max-mutations-per-generation 1 \
-  --validator-debug --validator-debug-dir outputs/validate_logs \
-  --llm-log-dir outputs/traces --llm-log-port 14005 \
-  --stdout-dir outputs/logs --disable-insights-lineage \
+  --redis-db 0 \
+  --max-generations 400 \
+  --max-mutations-per-generation 4 \
+  --validator-debug \
+  --log-dir <dir_for_logs> \
   --execution-mode remote_execution
 ```
 
@@ -113,11 +112,12 @@ OPENAI_API_KEY="<KEY>" kernel-evo evolve \
   --precision fp16 \
   --model-name <MODEL> \
   --llm-base-url https://openrouter.ai/api/v1 \
-  --redis-db 2 \
-  --max-generations 10 \
-  --max-mutations-per-generation 2 \
-  --validator-debug --validator-debug-dir <dir_for_validations_debug> \
-  --llm-log-dir <dir_for_logs>
+  --redis-db 0 \
+  --max-generations 400 \
+  --max-mutations-per-generation 4 \
+  --validator-debug \
+  --log-dir <dir_for_logs> \
+  --execution-mode remote_execution
 ```
 
 ---
@@ -139,10 +139,10 @@ Export the program from a specific iteration (e.g. after inspecting TensorBoard)
 
 ```bash
 kernel-evo extract \
-  --redis-db 2 \
+  --redis-db 0 \
   --iteration 8 \
   --redis-prefix "kernel_evo" \
-  --output-file prog8.py
+  --output-file best_program.py
 ```
 
 ---
@@ -158,7 +158,8 @@ kernel-evo compare \
   --problem-path tasks/armt_associate/task.py \
   --backend triton \
   --precision fp16 \
-  --num-perf-trials 300
+  --num-perf-trials 200 \
+  --num-correct-trials 20
 ```
 
 ### KernelBench task
@@ -172,7 +173,9 @@ kernel-evo compare \
   --level 1 \
   --problem-id 36 \
   --backend triton \
-  --precision fp16
+  --precision fp16 \
+  --num-perf-trials 200 \
+  --num-correct-trials 20
 ```
 
 ---
@@ -215,4 +218,4 @@ Better to run validation via validator server in different terminal. This way, o
 
 ### Cheaper start
 
-Use flag `--disable-insights-lineage` to disable addtitional calls. Benefitial for short debug runs or with expensive models.
+Use flag `--disable-insights-lineage` with `kernel-evo evolve` to disable addtitional calls. Benefitial for short debug runs or with expensive models.

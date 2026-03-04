@@ -8,18 +8,11 @@ description = "Evolutionary Generation for efficient kernels"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
-    "gigaevo @ git+https://github.com/KhrulkovV/gigaevo-core-internal.git@svtdanny/prompt-dir",
+    "gigaevo @ git+https://github.com/FusionBrainLab/gigaevo-core.git",
     "kernelbench @ git+https://github.com/ScalingIntelligence/KernelBench.git",
 
     "json_repair",
     "fastapi", # eval server
-
-    "cma", # gigaevo. TODO: refactor on gigaevo side
-    # memory. TODO: refactor on gigaevo side
-    "chromadb", 
-    "nltk",
-    "rank_bm25",
-    "sentence_transformers",
 ]
 
 [project.scripts]
