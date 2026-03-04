@@ -122,9 +122,25 @@ class RepairStage(Stage):
         res = await self._validator_stage.execute(program)
         if res.status == StageState.COMPLETED and res.output is not None:
             try:
-                metrics = res.output.data
-                if isinstance(metrics, dict):
+                # CallValidatorFunction output is Box[(metrics_dict, artifact)] in newer gigaevo.
+                # Keep backward compatibility with older validators returning only dict.
+                output_data = res.output.data
+                if (
+                    isinstance(output_data, tuple)
+                    and len(output_data) >= 1
+                    and isinstance(output_data[0], dict)
+                ):
+                    metrics = output_data[0]
                     return {str(k): float(v) for k, v in metrics.items()}, None
+                if (
+                    isinstance(output_data, list)
+                    and len(output_data) >= 1
+                    and isinstance(output_data[0], dict)
+                ):
+                    metrics = output_data[0]
+                    return {str(k): float(v) for k, v in metrics.items()}, None
+                if isinstance(output_data, dict):
+                    return {str(k): float(v) for k, v in output_data.items()}, None
             except Exception:
                 pass
             return {}, None

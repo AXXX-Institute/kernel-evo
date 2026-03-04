@@ -8,7 +8,9 @@ These are used to tweak the GigaEvo pipeline *without* modifying `gigaevo-core-i
 
 import json
 
-from gigaevo.entrypoint.constants import DEFAULT_STAGE_TIMEOUT
+from gigaevo.entrypoint.constants import (
+    DEFAULT_SIMPLE_STAGE_TIMEOUT as DEFAULT_STAGE_TIMEOUT,
+)
 from gigaevo.entrypoint.default_pipelines import ContextPipelineBuilder
 from gigaevo.entrypoint.evolution_context import EvolutionContext
 from gigaevo.programs.core_types import VoidInput
@@ -72,6 +74,12 @@ class DirectCodeContextPipelineBuilder(ContextPipelineBuilder):
 
         # Replace the validator stage with a repair loop that retries validation.
         self.remove_stage("CallValidatorFunction")
+        
+        # Newer default pipelines split validator output extraction into dedicated stages.
+        # Remove them too because RepairStage already returns final metrics.
+        self.remove_stage("FetchMetrics")
+        self.remove_stage("FetchArtifact")
+        self.remove_stage("FormatterStage")
 
         # Feed Program.code directly into the repair/validator loop.
         self.add_stage(
