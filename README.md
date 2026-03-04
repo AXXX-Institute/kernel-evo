@@ -47,8 +47,8 @@ pip install -e . --ignore-requires-python
 Pull and run (when a pre-built image is published):
 
 ```bash
-docker pull svtdanny/kernel-evo:latest
-docker run --rm kernel-evo:latest kernel-evo --help
+docker pull sivtsovdt/kernel-evo:latest
+docker run --rm sivtsovdt/kernel-evo:latest kernel-evo --help
 ```
 
 To build the image yourself (e.g. for private dependencies or development), see **[build/README.md](build/README.md)**.
