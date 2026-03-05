@@ -2,7 +2,7 @@
   <img src="logo/banner.png" alt="Kernel Evo banner" />
 </div>
 
-**Evolutionary generation of efficient GPU kernels** using [GigaEvo](https://github.com/KhrulkovV/gigaevo-core-internal).  
+**Evolutionary generation of efficient GPU kernels** using [GigaEvo](https://github.com/FusionBrainLab/gigaevo-core).  
 Define a task, run evolution with an LLM backend, extract and compare optimized programs.
 
 <div align="center">
