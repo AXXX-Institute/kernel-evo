@@ -3,7 +3,20 @@ __pycache__/
 *.egg-info/
 .python-version
 *.pyc
+.pytest_cache/
+.venv/
+dist/
+*.ncu-rep
 
-# local state folders
-outputs
-./memory
+# local state and experiment outputs
+outputs/
+outputs*/
+memory/
+os/
+plans/
+gifs/
+src/kernel_evo/resources/run_config.json
+src/kernel_evo/resources/initial_programs/
+src/kernel_evo/resources/prompts_run/
+src/kernel_evo/resources/memory.runtime.yaml
+src/kernel_evo/resources/gigaevo/mut_dmp/

@@ -13,12 +13,14 @@ from gigaevo.entrypoint.constants import (
 )
 from gigaevo.entrypoint.default_pipelines import ContextPipelineBuilder
 from gigaevo.entrypoint.evolution_context import EvolutionContext
+from gigaevo.programs.dag.automata import ExecutionOrderDependency
 from gigaevo.programs.core_types import VoidInput
 from gigaevo.programs.program import Program
 from gigaevo.programs.stages.base import Stage
 from gigaevo.programs.stages.common import AnyContainer
 from gigaevo.programs.stages.stage_registry import StageRegistry
 from kernel_evo.core.stages.repair import RepairStage
+from kernel_evo.core.stages.profile.stage import ProfileMutationContextStage
 
 MAX_PROGRAM_REPAIRS = 10
 
@@ -91,6 +93,7 @@ class DirectCodeContextPipelineBuilder(ContextPipelineBuilder):
 
         # Read use_memory_for_errors from run_config.json if available
         use_memory_for_errors = False
+        run_config: dict[str, object] = {}
         run_config_path = ctx.problem_ctx.problem_dir / "run_config.json"
         if run_config_path.exists():
             try:
@@ -117,6 +120,22 @@ class DirectCodeContextPipelineBuilder(ContextPipelineBuilder):
 
         # Replace upstream edge for metrics merge: validator metrics now come from RepairStage.
         self.add_data_flow_edge("RepairStage", "MergeMetricsStage", "first")
+
+        if bool(run_config.get("profile_stage_enabled", False)):
+            self.add_stage(
+                "ProfileMutationContextStage",
+                lambda: ProfileMutationContextStage(
+                    llm=ctx.llm_wrapper,
+                    run_config=run_config,
+                    prompts_dir=ctx.prompts_dir,
+                    timeout=DEFAULT_STAGE_TIMEOUT,
+                ),
+            )
+            self.add_data_flow_edge("ProfileMutationContextStage", "MutationContextStage", "formatted")
+            self.add_exec_dep(
+                "ProfileMutationContextStage",
+                ExecutionOrderDependency(stage_name="EnsureMetricsStage", condition="always"),
+            )
 
 
 class DirectCodeContextPipelineNoInsightsLineageBuilder(DirectCodeContextPipelineBuilder):

@@ -5,6 +5,7 @@ import sys
 from dataclasses import asdict
 from pathlib import Path
 
+from kernel_evo.core.precision import VALID_PRECISIONS, VALID_RUNTIME_PRECISIONS
 from kernel_evo.core.program.compare import (
     EvalConfig,
     EvalSummary,
@@ -120,7 +121,16 @@ def setup_parser(subparsers: argparse.ArgumentParser) -> None:
         choices=["triton", "cuda_inline"],
         help="Supported backends only.",
     )
-    parser.add_argument("--precision", default="fp32", choices=["fp32", "fp16", "bf16"])
+    parser.add_argument("--precision", default="fp32", choices=list(VALID_PRECISIONS))
+    parser.add_argument(
+        "--runtime-precision",
+        default="",
+        choices=["", *VALID_RUNTIME_PRECISIONS],
+        help=(
+            "Tensor dtype used by evaluation for inputs, model params, and output comparison. "
+            "Defaults to bf16 for --precision fp8, otherwise matches --precision."
+        ),
+    )
     parser.add_argument("--timing-method", default="cuda_event")
     parser.add_argument("--num-correct-trials", type=int, default=5)
     parser.add_argument("--num-perf-trials", type=int, default=100)
@@ -135,7 +145,7 @@ def setup_parser(subparsers: argparse.ArgumentParser) -> None:
         default="",
         help="Path to kernel_evo repo root (default: auto-detect via pyproject.toml from this file or cwd).",
     )
-    parser.add_argument("--device", default="cuda:7", help="Device for evaluation")
+    parser.add_argument("--device", default="cuda:0", help="Device for evaluation")
 
 
 def compare(args: argparse.Namespace) -> None:
@@ -159,6 +169,7 @@ def compare(args: argparse.Namespace) -> None:
         output_rtol=float(args.output_rtol) if args.output_rtol is not None else None,
         output_atol=float(args.output_atol) if args.output_atol is not None else None,
         device=args.device,
+        runtime_precision=args.runtime_precision,
     )
 
     result = run_compare(

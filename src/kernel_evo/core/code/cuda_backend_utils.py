@@ -9,9 +9,11 @@ Note: cuda_inline and all future backends may have a separate prompt directory
 (e.g. resources/prompts/<backend>/ or per-run prompts). See python_backend_utils.BACKENDS_WITH_SEPARATE_PROMPT_DIR.
 """
 
+import site
 from pathlib import Path
 from typing import Any
 
+from kernel_evo.core.code.python_backend_utils import _precision_contract_block
 
 # Backend identifier for the inline-CUDA path (evolved code is Python using load_inline)
 CUDA_INLINE_BACKENDS: set[str] = {"cuda_inline"}
@@ -61,6 +63,70 @@ def apply_cuda_arch_env(run_cfg: dict[str, Any] | None) -> None:
         os.environ["TORCH_CUDA_ARCH_LIST"] = arch
 
 
+def _append_env_paths(name: str, paths: list[str]) -> None:
+    import os
+
+    existing = [item for item in os.environ.get(name, "").split(":") if item]
+    merged: list[str] = []
+    for item in [*paths, *existing]:
+        if item and item not in merged:
+            merged.append(item)
+    if merged:
+        os.environ[name] = ":".join(merged)
+
+
+def discover_cuda_userland_paths(run_cfg: dict[str, Any] | None = None) -> tuple[list[str], list[str]]:
+    include_dirs: list[str] = []
+    library_dirs: list[str] = []
+
+    def add_if_dir(items: list[str], path: Path) -> None:
+        resolved = str(path.expanduser().resolve())
+        if path.exists() and path.is_dir() and resolved not in items:
+            items.append(resolved)
+
+    cuda_home = None
+    if run_cfg:
+        for key in ("cuda_home", "CUDA_HOME", "cuda_path"):
+            value = str(run_cfg.get(key, "") or "").strip()
+            if value:
+                cuda_home = Path(value)
+                break
+    if cuda_home is not None:
+        add_if_dir(include_dirs, cuda_home / "include")
+        for lib_name in ("lib64", "lib"):
+            add_if_dir(library_dirs, cuda_home / lib_name)
+
+    roots: list[Path] = []
+    try:
+        roots.extend(Path(p) for p in site.getsitepackages())
+    except Exception:
+        pass
+    try:
+        user_site = site.getusersitepackages()
+        if user_site:
+            roots.append(Path(user_site))
+    except Exception:
+        pass
+    for root in roots:
+        nvidia_root = root / "nvidia"
+        if not nvidia_root.exists():
+            continue
+        for pkg in sorted(nvidia_root.iterdir()):
+            add_if_dir(include_dirs, pkg / "include")
+            add_if_dir(library_dirs, pkg / "lib")
+
+    return include_dirs, library_dirs
+
+
+def apply_cuda_build_env(run_cfg: dict[str, Any] | None) -> None:
+    apply_cuda_arch_env(run_cfg)
+    include_dirs, library_dirs = discover_cuda_userland_paths(run_cfg)
+    _append_env_paths("CPATH", include_dirs)
+    _append_env_paths("CPLUS_INCLUDE_PATH", include_dirs)
+    _append_env_paths("LIBRARY_PATH", library_dirs)
+    _append_env_paths("LD_LIBRARY_PATH", library_dirs)
+
+
 def get_cuda_inline_compliance_block(run_cfg: dict[str, Any]) -> str:
     """
     Backend compliance text for task description when backend is cuda_inline.
@@ -84,6 +150,8 @@ def get_cuda_inline_compliance_block(run_cfg: dict[str, Any]) -> str:
         "- Use `from torch.utils.cpp_extension import load_inline`.\n"
         "- Pass inline C++ binding code as `cpp_sources` and CUDA kernel code as `cuda_sources`.\n"
         "- Use `functions=[...]` to expose the kernel entry point(s), and call them in forward.\n"
+        "- If you use cuBLAS/cuSPARSE/cuDNN headers, include the correct CUDA/PyTorch "
+        "headers explicitly in the source.\n"
         "- You may use `extra_cuda_cflags` (e.g. `['--use_fast_math', '-O3']`) for optimization.\n"
         "- Defining inline CUDA but never calling the loaded function from forward is NON-COMPLIANT.\n"
         f"{arch_note}"
@@ -99,7 +167,8 @@ def build_task_description_cuda_inline(
 ) -> str:
     """
     Build full task_description.txt for the cuda_inline backend.
-    Same overall shape as python_backend_utils.build_task_description_python, with cuda_inline-specific goal and compliance.
+    Same overall shape as python_backend_utils.build_task_description_python,
+    with cuda_inline-specific goal and compliance.
     """
     from kernel_evo.core.code.python_backend_utils import (
         REF_INPUTS_BEGIN,
@@ -107,8 +176,20 @@ def build_task_description_cuda_inline(
         REF_MODEL_BEGIN,
         REF_MODEL_END,
     )
+    precision = str(run_cfg.get("precision", "fp32"))
+    runtime_precision = str(run_cfg.get("runtime_precision", precision))
+    fp8_cuda_guidance = ""
+    if precision == "fp8" and runtime_precision != "fp8":
+        fp8_cuda_guidance = (
+            "- For fp8 targets, keep Python/module I/O in the runtime precision but use genuine "
+            "fp8 paths inside CUDA code where possible "
+            "(for example fp8 packing/conversion or fp8 MMA-friendly fragments), "
+            "with accumulation in a wider type when needed.\n"
+        )
 
     return (
+        _precision_contract_block(run_cfg)
+        +
         "\n"
         "### Goal\n"
         "Evolve a program that is **Python source code** implementing the torch.nn.Module interface.\n"
@@ -130,6 +211,7 @@ def build_task_description_cuda_inline(
         "- Replace dominant Torch ops with your own CUDA kernels built via load_inline.\n"
         "- Prefer fusion: fewer kernel launches, fewer intermediate tensors.\n"
         "- Use appropriate block/grid sizes and vectorized loads/stores (e.g. float4) where beneficial.\n"
+        f"{fp8_cuda_guidance}"
         "\n"
         "### Insight traceability (IMPORTANT)\n"
         "- Program insights will be prefixed with IDs like `[id:<type>_<nn>] ...`.\n"

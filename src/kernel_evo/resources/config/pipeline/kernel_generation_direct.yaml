@@ -10,6 +10,10 @@ evolution_context:
   llm_wrapper: ${llm}
   storage: ${ref:redis_storage}
   prompts_dir: ${prompts.dir}
+  # IMPORTANT: without this line EvolutionContext.memory_provider falls back to
+  # the pydantic default_factory=NullMemoryProvider, and MemoryContextStage
+  # silently returns empty selections even when --memory=local is set.
+  memory_provider: ${memory_provider}
 
 pipeline_builder:
   _target_: kernel_evo.core.pipeline.builders.DirectCodeContextPipelineBuilder

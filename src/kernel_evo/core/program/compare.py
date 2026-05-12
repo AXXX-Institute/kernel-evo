@@ -5,6 +5,7 @@ from typing import Any
 
 import torch
 from kernel_evo.core.eval.eval import eval_kernel_against_ref, get_torch_dtype_from_string
+from kernel_evo.core.precision import resolve_runtime_precision_string
 from kernelbench.dataset import construct_kernelbench_dataset
 
 
@@ -62,6 +63,7 @@ class CompareResult:
 class EvalConfig:
     backend: str
     precision: str
+    runtime_precision: str
     timing_method: str
     num_correct_trials: int
     num_perf_trials: int
@@ -137,7 +139,8 @@ def run_compare(
     if " Model(" in program_b_src:
         program_b_src = program_b_src.replace(" Model", " ModelNew")
 
-    precision = get_torch_dtype_from_string(eval_config.precision)
+    runtime_precision = resolve_runtime_precision_string(eval_config.precision, eval_config.runtime_precision)
+    precision = get_torch_dtype_from_string(runtime_precision)
     device = torch.device(eval_config.device)
 
     res_a = eval_kernel_against_ref(

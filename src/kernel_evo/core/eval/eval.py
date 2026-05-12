@@ -20,6 +20,7 @@ from pydantic import BaseModel
 from kernelbench import timing, dataset
 
 
+
 def get_error_name(e: Exception) -> str:
     """
     Get the error name, for logging purposes
@@ -62,13 +63,19 @@ def set_seed(seed: int):
 
 def get_torch_dtype_from_string(precision: str) -> torch.dtype:
     """
-    Get the torch dtype for specific precision
+    Get the runtime torch dtype for a requested precision.
+
+    ``fp8`` is accepted as a generation target, but generic PyTorch module execution
+    still does not support many float8 kernels. We therefore keep ``fp8`` as a
+    generation target and use a supported runtime tensor dtype for validation.
     """
     if precision == "fp32":
         return torch.float32
     elif precision == "fp16":
         return torch.float16
     elif precision == "bf16":
+        return torch.bfloat16
+    elif precision == "fp8":
         return torch.bfloat16
     else:  # future, FP8, FP4, etc. support?
         raise ValueError(f"Invalid precision not supported: {precision}")
@@ -94,6 +101,32 @@ def get_tolerance_for_precision(precision: str | torch.dtype) -> float:
     }
     assert precision in PRECISION_TOLERANCES, f"Invalid precision not supported: {precision}"
     return PRECISION_TOLERANCES[precision]
+
+
+def _comparison_view(tensor: torch.Tensor) -> torch.Tensor:
+    if torch.is_floating_point(tensor):
+        return tensor.to(dtype=torch.float32)
+    if torch.is_complex(tensor):
+        return tensor.to(dtype=torch.complex64)
+    return tensor
+
+
+def _is_transient_compilation_error(error: Exception) -> bool:
+    text = str(error or "")
+    lowered = text.lower()
+    if "lock" in lowered:
+        return True
+
+    # Torch extension builds can race on temporary loader artifacts. Only treat
+    # those missing-file cases as transient; missing headers, compiler symbols,
+    # or the final extension .so after a failed build are real compilation errors.
+    if "no such file or directory" not in lowered:
+        return False
+    if "error building extension" in lowered:
+        return False
+    if ".so: cannot open shared object file" in lowered:
+        return False
+    return "torch_extensions" in lowered
 
 
 class KernelExecResult(BaseModel):
@@ -480,8 +513,8 @@ def eval_kernel_against_ref(
 
         backend_lower = backend.lower()
         if backend_lower == "cuda_inline" and run_cfg:
-            from kernel_evo.core.code.cuda_backend_utils import apply_cuda_arch_env
-            apply_cuda_arch_env(run_cfg)
+            from kernel_evo.core.code.cuda_backend_utils import apply_cuda_build_env
+            apply_cuda_build_env(run_cfg)
         # Both triton and cuda_inline use tempfile (JIT decorators or load_inline)
         ModelNew, tempfile = load_custom_model_with_tempfile(custom_model_src, entry_point="ModelNew")
         torch.cuda.synchronize(device=device)  # not sure if this is too much
@@ -489,7 +522,7 @@ def eval_kernel_against_ref(
         print(f"Failed to compile custom CUDA kernel: Record as compilation failure. \nError: {e}")
         # TODO: add metadata for compilation error (how to we get the compilation error message?)
 
-        if "lock" in str(e) or "No such file or directory" in str(e):
+        if _is_transient_compilation_error(e):
             # this is a lock file error, likely due to concurrent compilation
             # this does not necessarily mean the compilation failed, but we should retry
             print(f"[Eval] Lock file error during compilation, Please retry. Error: {e}")
@@ -752,9 +785,15 @@ def run_and_check_correctness(
                 metadata.setdefault("output_rtol", f"{rtol:g}")
                 print(f"[Eval] Output atol used in ALLCLOSE: {atol}, rtol: {rtol}")
                 # check output value difference
-                if not torch.allclose(output, output_new, atol=atol, rtol=rtol):  # fail
-                    max_diff = torch.max(torch.abs(output - output_new)).item()
-                    avg_diff = torch.mean(torch.abs(output - output_new)).item()
+                output_cmp = _comparison_view(output)
+                output_new_cmp = _comparison_view(output_new)
+                if output.dtype != output_new.dtype:
+                    metadata.setdefault("output_dtype", str(output.dtype))
+                    metadata.setdefault("output_new_dtype", str(output_new.dtype))
+                if not torch.allclose(output_cmp, output_new_cmp, atol=atol, rtol=rtol):  # fail
+                    diff = torch.abs(output_cmp - output_new_cmp)
+                    max_diff = torch.max(diff).item()
+                    avg_diff = torch.mean(diff).item()
                     metadata.setdefault("max_difference", []).append(f"{max_diff:.6f}")
                     metadata.setdefault("avg_difference", []).append(f"{avg_diff:.6f}")
                     metadata["correctness_issue"] = "Output mismatch"

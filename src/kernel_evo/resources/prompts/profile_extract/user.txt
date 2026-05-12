@@ -1,0 +1,13 @@
+Profiler: {profiler_name}
+
+Generate up to {max_insights} profiler-derived insights for the next mutation.
+
+Profiler summary JSON:
+```json
+{summary_json}
+```
+
+Candidate code:
+```python
+{code}
+```

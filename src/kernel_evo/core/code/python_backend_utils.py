@@ -82,6 +82,8 @@ def build_task_description_python(
       - validator receives context via context.py, but all context is also duplicated here for the LLM
     """
     return (
+        _precision_contract_block(run_cfg)
+        +
         "\n"
         "### Goal\n"
         "Evolve a program that is **Python source code** implemented in torch.nn.Module interface.\n"
@@ -139,6 +141,51 @@ def build_task_description_python(
         f"{REF_INPUTS_END}\n"
         "\n"
     )
+
+
+def _precision_contract_block(run_cfg: dict[str, Any]) -> str:
+    requested = str(run_cfg.get("precision", "fp32"))
+    runtime = str(run_cfg.get("runtime_precision", requested))
+    lines = [
+        "### Precision contract (IMPORTANT)",
+        f"- Requested kernel precision target is `{requested}`.",
+        (
+            "- Runtime tensor precision for validator/profiler inputs, module parameters, "
+            f"and output comparison is `{runtime}`."
+        ),
+        (
+            "- Do NOT unconditionally cast activations, parameters, temporary tensors, or "
+            "the returned output to `torch.float32` in Python `forward()` unless the "
+            "runtime precision is `fp32`."
+        ),
+        (
+            "- Keep tensor inputs/outputs in the runtime precision. If you need "
+            "higher-precision accumulation for numerical stability, do it inside the "
+            "kernel and cast back before returning."
+        ),
+    ]
+    if requested == "fp8" and runtime != "fp8":
+        lines.extend(
+            [
+                (
+                    "- `fp8` is still the kernel implementation target. The runtime fallback "
+                    "only exists because generic PyTorch validation/profiling cannot reliably "
+                    "execute arbitrary modules end-to-end in float8 today."
+                ),
+                (
+                    f"- Do NOT reinterpret the task as a `{runtime}` kernel request. Keep "
+                    f"Python-visible tensors in `{runtime}`, but implement fp8-specific "
+                    "math/storage/packing/casts inside the backend kernel when the backend "
+                    "supports it."
+                ),
+                (
+                    "- If the kernel needs dtype conversion, do it at the backend-kernel "
+                    "boundary or inside the kernel rather than rewriting the whole model to "
+                    "a bf16-only or fp16-only implementation."
+                ),
+            ]
+        )
+    return "\n".join(lines) + "\n"
 
 
 def _backend_compliance_block(run_cfg: dict[str, Any]) -> str:

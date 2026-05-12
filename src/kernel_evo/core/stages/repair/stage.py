@@ -18,6 +18,7 @@ from gigaevo.programs.stages.common import AnyContainer, FloatDictContainer
 from gigaevo.programs.stages.python_executors.execution import CallValidatorFunction
 from gigaevo.programs.stages.stage_registry import StageRegistry
 from gigaevo.programs.stages.validation import ValidateCodeStage
+from kernel_evo.resources.validate import RUNTIME_SENTINEL_US
 
 # Default path relative to package root (works for both dev and installed package)
 # stage.py is at kernel_evo/core/stages/repair/stage.py -> 3 parents = kernel_evo
@@ -101,6 +102,21 @@ class RepairStage(Stage):
             return payload
         return payload_obj
 
+    def _failure_metrics(self) -> dict[str, float]:
+        return {
+            "speedup": 0.0,
+            "runtime_us": float(RUNTIME_SENTINEL_US),
+            "ref_runtime_us": float(RUNTIME_SENTINEL_US),
+            "compiled": 0.0,
+            "correctness": 0.0,
+            "is_valid": 0.0,
+        }
+
+    def _normalize_metrics(self, metrics: dict[str, float]) -> dict[str, float]:
+        normalized = self._failure_metrics()
+        normalized.update({str(k): float(v) for k, v in metrics.items()})
+        return normalized
+
     async def _run_code_validation(self, program: Program) -> str | None:
         """Run safe-mode validation on program.code; return error string or None."""
         self._validate_code_stage.attach_inputs({})
@@ -131,19 +147,22 @@ class RepairStage(Stage):
                     and isinstance(output_data[0], dict)
                 ):
                     metrics = output_data[0]
-                    return {str(k): float(v) for k, v in metrics.items()}, None
+                    normalized = self._normalize_metrics(metrics)
+                    return normalized, None
                 if (
                     isinstance(output_data, list)
                     and len(output_data) >= 1
                     and isinstance(output_data[0], dict)
                 ):
                     metrics = output_data[0]
-                    return {str(k): float(v) for k, v in metrics.items()}, None
+                    normalized = self._normalize_metrics(metrics)
+                    return normalized, None
                 if isinstance(output_data, dict):
-                    return {str(k): float(v) for k, v in output_data.items()}, None
+                    normalized = self._normalize_metrics(output_data)
+                    return normalized, None
             except Exception:
                 pass
-            return {}, None
+            return None, "Validator returned no usable metrics"
         if res.error is None:
             return None, "Validator failed (no error details)"
         return None, res.error.pretty(include_traceback=True)
@@ -252,7 +271,7 @@ class RepairStage(Stage):
             last_invalid_code = program.code
             program.code = new_code
 
-        # Failed after all attempts: record metadata and return empty metrics.
+        # Failed after all attempts: record metadata and return sentinel invalid metrics.
         program.metadata["repair_loop"] = repair_md
 
         # If the LLM produced unsafe code and the last attempt errored, it can be
@@ -260,4 +279,4 @@ class RepairStage(Stage):
         if not program.code or (program.code and len(program.code) > MAX_CODE_LENGTH * 4):
             program.code = original_code
 
-        return FloatDictContainer(data={})
+        return FloatDictContainer(data=self._failure_metrics())

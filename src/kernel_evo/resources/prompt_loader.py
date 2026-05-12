@@ -12,7 +12,13 @@ from pathlib import Path
 _PROMPTS_DIR = Path(__file__).resolve().parent / "prompts"
 
 # Top-level stage dirs in the default prompts dir (copied as-is; exclude backends subdir)
-DEFAULT_STAGE_NAMES: tuple[str, ...] = ("mutation", "repair", "lineage", "insights")
+DEFAULT_STAGE_NAMES: tuple[str, ...] = (
+    "mutation",
+    "repair",
+    "lineage",
+    "insights",
+    "profile_extract",
+)
 
 # Subdir under prompts that holds per-backend override trees (not copied as a stage)
 BACKENDS_SUBDIR = "backends"
@@ -47,14 +53,10 @@ def load_prompt(agent_name: str, prompt_type: str, prompts_dir: Path | None = No
 
 def prepare_prompts_for_experiment(experiment_dir: Path, backend: str) -> Path:
     """Copy default prompts into experiment_dir/prompts, then overlay backend overrides.
-    Returns the path to use as prompts dir for this run (experiment_dir/prompts).
-    If experiment_dir is the package resources dir, uses experiment_dir/prompts_run to avoid copying onto source."""
+    Returns the path to use as prompts dir for this run (experiment_dir/prompts)."""
     default_dir = _PROMPTS_DIR.resolve()
     exp = Path(experiment_dir).resolve()
     dest = exp / "prompts"
-    # Avoid copying onto ourselves when experiment dir is the resources dir (problem_dir = get_resources_dir())
-    if dest.resolve() == default_dir:
-        dest = exp / "prompts_run"
     dest.mkdir(parents=True, exist_ok=True)
 
     # 1) Copy default stage dirs

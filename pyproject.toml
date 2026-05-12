@@ -8,11 +8,14 @@ description = "Evolutionary Generation for efficient kernels"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
-    "gigaevo @ git+https://github.com/FusionBrainLab/gigaevo-core.git",
+    "gigaevo @ git+https://github.com/FusionBrainLab/gigaevo-core.git@054df39c3b6bd782197985383f1006ef3cbe6586",
     "kernelbench @ git+https://github.com/ScalingIntelligence/KernelBench.git",
 
     "json_repair",
     "fastapi", # eval server
+    # gigaevo 1.28+ imports langfuse.langchain (3.x API); upstream constrains
+    # only langfuse>=2, so we pin >=3 here to avoid uv resolving to 2.x.
+    "langfuse>=3.0.0",
 ]
 
 [project.scripts]
@@ -37,11 +40,16 @@ kernel_evo = [
 
 [dependency-groups]
 dev = [
+    "pytest",
     "ruff"
 ]
 
 [tool.ruff]
 line-length = 120
+extend-exclude = [
+    "src/kernel_evo/resources/initial_programs",
+    "src/kernel_evo/resources/prompts_run",
+]
 
 [tool.ruff.lint]
 select = ["E", "F"]  # E = pycodestyle (includes E501 line-too-long), F = Pyflakes

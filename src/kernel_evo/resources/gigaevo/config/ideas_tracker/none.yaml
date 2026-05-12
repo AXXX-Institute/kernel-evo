@@ -1,0 +1,4 @@
+# @package _global_
+# No-op post-run hook (default).
+ideas_tracker:
+  _target_: gigaevo.evolution.engine.hooks.NullPostRunHook

@@ -1,0 +1,140 @@
+# Backend configuration for gigaevo.memory (A-MEM/GAM) and the ideas tracker.
+#
+# Loaded by gigaevo.memory.runtime_config at module import time.
+# Path resolution order:
+#   1. EVO_MEMORY_CONFIG_PATH env var (set by run.py to point here)
+#   2. EVO_MEMORY_SETTINGS_PATH env var
+#   3. <gigaevo>/config/memory.yaml
+#   4. <gigaevo>/memory/config.yaml
+#
+# Hydra-level provider/tracker settings (max_cards, redis_prefix, …) live in
+# config/memory/*.yaml and config/ideas_tracker/*.yaml; this file controls the
+# stuff gigaevo.memory reads directly.
+
+paths:
+  # Local memory store; can be overridden per-run via Hydra `checkpoint_dir`.
+  checkpoint_dir: memory
+  banks_dir: memory/idea_banks
+
+api:
+  # kernel-evo runs in local-only mode: legacy AmemGamMemory(config=MemoryConfig)
+  # writing/reading <checkpoint_dir>/api_index.json. The remote/platform backend
+  # (gigaevo.memory_platform + the GigaEvo Memory Module API server) is not
+  # supported here — `kernel-evo memory append` constructs the legacy backend
+  # directly, bypassing gigaevo.memory.write_pipeline.main (which has a
+  # kwargs-mismatch bug against the legacy class signature). Reader uses stock
+  # gigaevo SelectorMemoryProvider, which also routes to the legacy backend.
+  base_url: http://localhost:15010   # unused while use_api=false
+  namespace: default
+  use_api: false
+  channel: latest
+  author: null
+
+runtime:
+  enable_llm_synthesis: false
+  should_evolve: false
+  fill_missing_fields_with_llm: false
+  search_limit: 5
+  rebuild_interval: 30
+  sync_batch_size: 100
+  sync_on_init: true
+
+gam:
+  enable_bm25: false
+  pipeline_mode: experimental
+  allowed_tools:
+    - page_index
+    - vector
+  top_k_by_tool:
+    keyword: 5
+    vector: 3
+    vector_description: 3
+    vector_task_description: 0
+    vector_explanation_summary: 3
+    vector_description_explanation_summary: 3
+    vector_description_task_description_summary: 3
+    page_index: 5
+
+card_update_dedup:
+  enabled: true
+  retrieval:
+    top_k_per_query: 10
+    final_top_n: 10
+    min_final_score: 0.05
+    weights:
+      description: 0.35
+      explanation_summary: 0.2
+      description_explanation_summary: 0.3
+      description_task_description_summary: 0.15
+  llm:
+    max_retries: 2
+
+reasoning:
+  effort: "minimal"
+
+models:
+  openai_base_url: https://openrouter.ai/api/v1
+  openrouter_model_name: google/gemini-3-flash-preview
+  amem_embedding_model_name: all-MiniLM-L6-v2
+  gam_dense_retriever_model_name: BAAI/bge-m3
+
+downloads:
+  huggingface:
+    etag_timeout: 60
+    download_timeout: 300
+
+ideas_tracker:
+  list_max_ideas: 20
+  analyzer:
+    type: default
+    model: google/gemini-3-flash-preview
+    base_url: "https://openrouter.ai/api/v1"
+    reasoning:
+      effort: "minimal"
+    postprocessing:
+      type: default
+    record_conversion:
+      type: default
+    description_rewriting: true
+
+  analyzer_fast_settings:
+    embeddings_model: "sentence-transformers/all-mpnet-base-v2"
+    batch_size: 32
+    min_samples_for_dbscan: 4
+    dbscan_eps: 0.38
+    dbscan_min_samples: 2
+    max_attempts: 10
+    max_rounds: 100
+    recompute_center: false
+    refine_subgroup_size: 1000
+    llm_max_concurrent: 100
+
+  redis:
+    redis_host: "localhost"
+    redis_port: 6379
+    redis_db: 1
+    redis_prefix: "default"
+    label: ""
+
+  statistics:
+    enabled: false
+    mode: "top_k"
+    top_k_delta_fitness: 5
+    top_k_fitness: 5
+
+  memory_write_pipeline:
+    enabled: true
+    best_programs_percent: 5.0
+
+  usage_tracking:
+    enabled: true
+
+  experimental_features:
+    ml_impact_pipeline:
+      enabled: false
+      n_iterations: 200
+      include_interactions: true
+      max_interaction_pairs: 10
+      min_idea_programs: 2
+      confidence_level: 0.95
+      random_state: 42

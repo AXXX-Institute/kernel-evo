@@ -180,6 +180,68 @@ kernel-evo compare \
 
 ---
 
+## Profile kernels during evolution
+
+Optional Nsight Compute and/or PyTorch-profiler runs whose output is fed back into the mutation prompt as performance insights.
+
+```bash
+kernel-evo evolve ... \
+  --enable-profiler-stage \
+  --profile-runners torch,ncu \
+  --profile-ncu-min-speedup 1.0
+```
+
+Key flags:
+- `--enable-profiler-stage` — turn on the optional `ProfileMutationContextStage`.
+- `--profile-runners` — comma-separated: `torch`, `ncu`, or both.
+- `--profile-max-insights` — cap on insights surfaced per program (default 4).
+- `--profile-torch-warmup-steps` / `--profile-torch-active-steps` — torch profiler stepping.
+- `--profile-ncu-path` — `ncu` executable (resolved from PATH by default).
+- `--profile-ncu-set` — NCU section set (default `full`).
+- `--profile-ncu-kernel-name` — optional `--kernel-name` filter for NCU.
+- `--profile-ncu-extra-args` — raw extra args appended to the ncu command line.
+- `--profile-ncu-min-speedup` — only run NCU when measured speedup ≥ this threshold (default 1.0; skips wastefully profiling slow programs).
+
+Profile artifacts (json/qdrep/etc.) are written to `<log-dir>/<problem>/artifacts/`.
+
+---
+
+## Reuse memory across runs
+
+Build a memory bank from one or more finished evolve runs, then feed it into newer runs read-only. The bank is a directory containing `api_index.json`; it can be shipped to other people.
+
+### Build / extend a bank
+
+`kernel-evo memory append` reads programs from a finished run's Redis DB, runs the ideas analyzer, and writes cards into `<memory-dir>/api_index.json`. Run it once per source experiment.
+
+```bash
+# First time — directory does not yet contain a bank, this creates one
+kernel-evo memory append \
+  --memory-dir <bank-dir> \
+  --redis-prefix <problem.name> \
+  --redis-db 0
+
+# Run again with another source experiment to extend the same bank
+kernel-evo memory append \
+  --memory-dir <bank-dir> \
+  --redis-prefix <other_problem.name> \
+  --redis-db 1
+```
+
+`--redis-prefix` is the `problem.name` printed by `kernel-evo evolve` (e.g. `kernelbench_2_2_20260511_171830`). Use `--analyzer-type fast` to skip the per-pair LLM analyzer and cluster via embeddings instead.
+
+### Use the bank in a new evolve run
+
+```bash
+kernel-evo evolve ... \
+  --enable-memory \
+  --memory-dir <bank-dir>
+```
+
+Evolve only **reads** from the bank — it never writes back, so the directory stays flat and reusable. Per-program selections appear in the log as `[MemoryContextStage] Selected N card(s) ...` and are injected into the mutation prompt. Only the local backend is supported; `--memory=api` raises `NotImplementedError`.
+
+---
+
 ## CLI overview
 
 | Command         | Description                          |
@@ -188,6 +250,7 @@ kernel-evo compare \
 | `eval-server`  | Start remote validation server       |
 | `extract`      | Export program by iteration from Redis |
 | `compare`      | Compare two programs (correctness + perf) |
+| `memory append`| Build / extend a memory bank from a finished evolve run |
 
 ---
 

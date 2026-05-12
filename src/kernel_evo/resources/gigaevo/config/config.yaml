@@ -1,8 +1,20 @@
 defaults:
   - experiment: base       # Base experiment setup (override with experiment=full_featured)
+  - ideas_tracker: none    # Post-run ideas analysis (override with ideas_tracker=default|fast)
+  - memory: none           # Memory provider for DAG (override with memory=local|api)
   - _self_
 
 # Problem metadata (set via command line or problem-specific config)
 problem:
   name: ???  # Required
   dir: ${hydra:runtime.cwd}/problems/${problem.name}
+
+# Memory backend overrides — read by gigaevo.memory and the ideas tracker.
+# Default `null` → fall back to defaults shipped in memory_backend.yaml.
+checkpoint_dir: null
+namespace: null
+
+# Per-run output directory (kernel-evo's experiment_dir). Used by ideas_tracker
+# configs to keep session diagnostics (banks.json, programs.json, log.txt)
+# inside the run's log dir rather than polluting the shared memory bank.
+experiment_dir: null

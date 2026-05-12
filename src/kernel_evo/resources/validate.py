@@ -1,18 +1,76 @@
 import hashlib
 import io
 import json
+import ast
+import time
 import traceback
 from contextlib import redirect_stderr, redirect_stdout
-import sys
 from pathlib import Path
 from typing import Any
 from loguru import logger
 from datetime import datetime
 
+from kernel_evo.core.precision import resolve_runtime_precision_string
 from kernel_evo.resources.paths import get_problem_dir
 
 
 RUNTIME_SENTINEL_US = 1_000_000_000.0
+
+
+def _is_torch_float32(node: ast.AST | None) -> bool:
+    if not isinstance(node, ast.Attribute):
+        return False
+    return (
+        isinstance(node.value, ast.Name)
+        and node.value.id == "torch"
+        and node.attr == "float32"
+    )
+
+
+def _find_disallowed_forward_float32_casts(custom_model_src: str, runtime_precision: str) -> list[str]:
+    precision = str(runtime_precision or "").strip().lower()
+    if precision in {"", "fp32"}:
+        return []
+
+    try:
+        tree = ast.parse(custom_model_src)
+    except SyntaxError:
+        return []
+
+    violations: list[str] = []
+    for node in tree.body:
+        if not isinstance(node, ast.ClassDef) or node.name != "ModelNew":
+            continue
+        for item in node.body:
+            if not isinstance(item, ast.FunctionDef) or item.name != "forward":
+                continue
+            for sub in ast.walk(item):
+                if not isinstance(sub, ast.Call):
+                    continue
+                func = sub.func
+                if isinstance(func, ast.Attribute) and func.attr == "float":
+                    violations.append(
+                        f"ModelNew.forward uses `.float()` at line {sub.lineno}, "
+                        f"which overrides requested precision {precision}."
+                    )
+                    continue
+                if isinstance(func, ast.Attribute) and func.attr == "to":
+                    if sub.args and _is_torch_float32(sub.args[0]):
+                        violations.append(
+                            f"ModelNew.forward uses `.to(torch.float32)` at line "
+                            f"{sub.lineno}, which overrides requested precision {precision}."
+                        )
+                        continue
+                    for kw in sub.keywords:
+                        if kw.arg == "dtype" and _is_torch_float32(kw.value):
+                            violations.append(
+                                f"ModelNew.forward uses `.to(..., dtype=torch.float32)` "
+                                f"at line {sub.lineno}, which overrides requested "
+                                f"precision {precision}."
+                            )
+                            break
+            return violations
+    return violations
 
 
 def _extract_custom_model_src(payload: Any) -> str:
@@ -146,11 +204,17 @@ def run_local_validation(
 
     backend = str(cfg.get("backend", "triton"))  # supported: triton, cuda_inline only
     precision_str = str(cfg.get("precision", "fp32"))
+    runtime_precision_str = resolve_runtime_precision_string(
+        precision_str,
+        str(cfg.get("runtime_precision", "") or ""),
+    )
     timing_method = str(cfg.get("timing_method", "cuda_event"))
     device_str = str(cfg.get("device", "cuda"))
     device = torch.device(device_str)
     num_correct_trials = int(cfg.get("num_correct_trials", 5))
     num_perf_trials = int(cfg.get("num_perf_trials", 100))
+    transient_retry_limit = max(0, int(cfg.get("validator_transient_retries", 3)))
+    transient_retry_delay = max(0.0, float(cfg.get("validator_transient_retry_delay", 1.0)))
     output_rtol = cfg.get("output_rtol")
     output_atol = cfg.get("output_atol")
     if not isinstance(output_rtol, (int, float)):
@@ -162,37 +226,59 @@ def run_local_validation(
     result = None
     exc: BaseException | None = None
     try:
-        with redirect_stdout(captured_buf), redirect_stderr(captured_buf):
-            precision = get_torch_dtype_from_string(precision_str)
-            result = eval_kernel_against_ref(
-                ref_arch_src,
-                custom_model_src,
-                verbose=bool(cfg.get("validator_debug", False)),
-                measure_performance=True,
-                timing_method=timing_method,
-                num_correct_trials=num_correct_trials,
-                num_perf_trials=num_perf_trials,
-                backend=backend,
-                precision=precision,
-                output_rtol=output_rtol,
-                output_atol=output_atol,
-                device=device,
-                run_cfg=cfg,
+        precision_violations = _find_disallowed_forward_float32_casts(custom_model_src, runtime_precision_str)
+        if precision_violations:
+            raise ValueError(
+                "Precision policy violation: runtime precision "
+                f"{runtime_precision_str} forbids Python-side float32 promotion in ModelNew.forward(). "
+                "Keep activations/output in the requested precision and do any higher-precision "
+                "accumulation inside the kernel before casting back. "
+                + " ".join(precision_violations)
             )
-            # eval can return None (e.g. lock/file errors); treat as compilation failure
+        with redirect_stdout(captured_buf), redirect_stderr(captured_buf):
+            precision = get_torch_dtype_from_string(runtime_precision_str)
+            max_attempts = transient_retry_limit + 1
+            for attempt_idx in range(max_attempts):
+                result = eval_kernel_against_ref(
+                    ref_arch_src,
+                    custom_model_src,
+                    verbose=bool(cfg.get("validator_debug", False)),
+                    measure_performance=True,
+                    timing_method=timing_method,
+                    num_correct_trials=num_correct_trials,
+                    num_perf_trials=num_perf_trials,
+                    backend=backend,
+                    precision=precision,
+                    output_rtol=output_rtol,
+                    output_atol=output_atol,
+                    device=device,
+                    run_cfg=cfg,
+                )
+                if result is not None:
+                    break
+                logger.warning(
+                    "Validation returned no result on attempt "
+                    f"{attempt_idx + 1}/{max_attempts}; treating it as transient and retrying"
+                )
+                if attempt_idx + 1 < max_attempts and transient_retry_delay > 0:
+                    time.sleep(transient_retry_delay)
             if result is None:
                 from kernel_evo.core.eval.eval import KernelExecResult
+
                 result = KernelExecResult(
                     compiled=False,
                     metadata={
+                        "compilation_error_name": "TransientEvaluationError",
                         "compilation_error": RuntimeError(
-                            "Evaluation returned no result (e.g. lock or transient error)"
+                            "Evaluation returned no result after "
+                            f"{max_attempts} attempt(s) "
+                            "(e.g. lock or transient error)"
                         ),
                     },
                 )
             if not result.compiled:
                 logger.error(f"[TRACEDEB_USER] Compilation error: {result.metadata}")
-                raise result.metadata["compilation_error"]
+                raise result.metadata.get("compilation_error", RuntimeError(f"Compilation failed: {result.metadata}"))
 
             if not result.correctness:
                 logger.error(f"[TRACEDEB_USER] Runtime error: {result.metadata}")
@@ -242,6 +328,9 @@ def run_local_validation(
     )
 
     return {
+        # Canonical fitness metric used by downstream tooling (ideas tracker, extract --best, etc.).
+        # For KernelBench, we treat speedup as fitness (higher is better).
+        "fitness": float(speedup),
         "speedup": float(speedup),
         "runtime_us": float(runtime_us if runtime_us > 0 else RUNTIME_SENTINEL_US),
         "ref_runtime_us": float(ref_runtime_us if ref_runtime_us > 0 else RUNTIME_SENTINEL_US),

@@ -1,5 +1,7 @@
 import asyncio
 from datetime import datetime, timezone
+import os
+from pathlib import Path
 import time
 
 from dotenv import load_dotenv
@@ -7,6 +9,14 @@ import hydra
 from hydra.utils import instantiate
 from loguru import logger
 from omegaconf import DictConfig
+
+# Point gigaevo.memory.runtime_config at our shipped backend YAML before the
+# memory submodule is imported (it reads settings at module import time).
+# Users can override with EVO_MEMORY_CONFIG_PATH externally.
+os.environ.setdefault(
+    "EVO_MEMORY_CONFIG_PATH",
+    str(Path(__file__).resolve().parent / "memory_backend.yaml"),
+)
 
 from gigaevo.config.resolvers import register_resolvers
 from gigaevo.database.redis_program_storage import RedisProgramStorage

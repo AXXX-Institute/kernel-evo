@@ -7,6 +7,7 @@ evolution_context:
   llm_wrapper: ${ref:llm}
   storage: ${ref:redis_storage}
   prompts_dir: ${prompts.dir}
+  memory_provider: ${memory_provider}
 
 # Pipeline builder - automatically selects based on problem_context.is_contextual
 pipeline_builder:

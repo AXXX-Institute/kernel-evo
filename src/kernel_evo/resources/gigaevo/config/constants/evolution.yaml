@@ -8,3 +8,5 @@ num_parents: 2
 mutation_mode: rewrite
 max_generations: null
 strip_comments_and_docstrings: false
+# Optional async callable invoked before every evolution step. null = no-op.
+pre_step_hook: null

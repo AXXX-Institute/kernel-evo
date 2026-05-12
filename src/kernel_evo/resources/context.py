@@ -6,7 +6,6 @@ This file is loaded by GigaEvo's AddContext stage (`build_context`).
 from __future__ import annotations
 
 import json
-from pathlib import Path
 from typing import Any
 
 from kernel_evo.resources.paths import get_problem_dir
