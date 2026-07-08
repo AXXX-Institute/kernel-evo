@@ -13,11 +13,12 @@ REF_INPUTS_END = "<<<REF_INPUTS_INIT_END>>>"
 PYTHON_BACKENDS: set[str] = {
     "triton",
     "cuda_inline",  # Python + torch.utils.cpp_extension.load_inline (compile C++/CUDA on the fly)
+    "cute",  # Python + NVIDIA CUTLASS CuTe DSL (cutlass.cute), JIT-compiled via cute.compile
 }
 
 # Backends that may use a separate prompt directory (e.g. resources/prompts/<backend>/ or per-run prompts).
 # cuda_inline and future backends can override task description / prompts via this convention.
-BACKENDS_WITH_SEPARATE_PROMPT_DIR: set[str] = {"cuda_inline"}
+BACKENDS_WITH_SEPARATE_PROMPT_DIR: set[str] = {"cuda_inline", "cute"}
 
 
 def is_python_backend(backend: str) -> bool:
@@ -217,6 +218,10 @@ def _backend_compliance_block(run_cfg: dict[str, Any]) -> str:
     if backend == "cuda_inline":
         from kernel_evo.core.code.cuda_backend_utils import get_cuda_inline_compliance_block
         return get_cuda_inline_compliance_block(run_cfg)
+
+    if backend == "cute":
+        from kernel_evo.core.code.cute_backend_utils import get_cute_compliance_block
+        return get_cute_compliance_block(run_cfg)
 
     return base
 

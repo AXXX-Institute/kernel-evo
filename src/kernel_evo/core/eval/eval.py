@@ -441,7 +441,9 @@ def eval_kernel_against_ref(
     # TODO: check device is busy
     assert torch.cuda.is_available(), "CUDA is not available, cannot run Eval"
 
-    assert backend.lower() in ("triton", "cuda_inline"), f"Unsupported backend: {backend} (only triton, cuda_inline)"
+    assert backend.lower() in ("triton", "cuda_inline", "cute"), (
+        f"Unsupported backend: {backend} (only triton, cuda_inline, cute)"
+    )
 
     torch.set_printoptions(
         precision=4,  # Decimal places
@@ -453,8 +455,8 @@ def eval_kernel_against_ref(
     # set CUDA device
     torch.cuda.set_device(device)
 
-    # Both supported backends use tempfile for proper module loading
-    uses_tempfile = backend.lower() in ["triton", "cuda_inline"]
+    # All supported backends use tempfile for proper module loading
+    uses_tempfile = backend.lower() in ["triton", "cuda_inline", "cute"]
 
     metadata = {}  # for storing result metadata
     metadata["hardware"] = torch.cuda.get_device_name(device=device)
@@ -515,7 +517,10 @@ def eval_kernel_against_ref(
         if backend_lower == "cuda_inline" and run_cfg:
             from kernel_evo.core.code.cuda_backend_utils import apply_cuda_build_env
             apply_cuda_build_env(run_cfg)
-        # Both triton and cuda_inline use tempfile (JIT decorators or load_inline)
+        elif backend_lower == "cute" and run_cfg:
+            from kernel_evo.core.code.cute_backend_utils import apply_cute_build_env
+            apply_cute_build_env(run_cfg)
+        # triton/cuda_inline/cute all use tempfile (JIT decorators, load_inline, or cute.compile)
         ModelNew, tempfile = load_custom_model_with_tempfile(custom_model_src, entry_point="ModelNew")
         torch.cuda.synchronize(device=device)  # not sure if this is too much
     except Exception as e:

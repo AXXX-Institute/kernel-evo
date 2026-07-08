@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from kernel_evo.core.code.cuda_backend_utils import build_task_description_cuda_inline
+from kernel_evo.core.code.cute_backend_utils import build_task_description_cute
 from kernel_evo.core.code.evolve import build_task_description_for_backend
 from kernel_evo.core.code.python_backend_utils import build_task_description_python
 
@@ -13,6 +14,12 @@ RUN_CFG_FP8 = {
 
 CUDA_RUN_CFG_FP8 = {
     "backend": "cuda_inline",
+    "precision": "fp8",
+    "runtime_precision": "bf16",
+}
+
+CUTE_RUN_CFG_FP8 = {
+    "backend": "cute",
     "precision": "fp8",
     "runtime_precision": "bf16",
 }
@@ -57,3 +64,31 @@ def test_backend_specific_builder_uses_cuda_inline_task_description() -> None:
 
     assert "genuine fp8 paths inside CUDA code where possible" in task_description
     assert "The code must use **inline C++/CUDA** compiled on the fly" in task_description
+
+
+def test_cute_task_description_adds_fp8_kernel_guidance() -> None:
+    task_description = build_task_description_cute(
+        run_cfg=CUTE_RUN_CFG_FP8,
+        ref_arch_src="",
+        ref_model_class_src="class Model(torch.nn.Module):\n    pass\n",
+        ref_inputs_init_src="",
+    )
+
+    assert "genuine fp8 paths inside the CuTe kernel where possible" in task_description
+    assert "cutlass.cute" in task_description
+    assert "@cute.kernel" in task_description
+    assert "Triton-first" not in task_description
+
+
+def test_backend_specific_builder_uses_cute_task_description() -> None:
+    task_description = build_task_description_for_backend(
+        run_cfg=CUTE_RUN_CFG_FP8,
+        ref_arch_src="",
+        ref_model_class_src="class Model(torch.nn.Module):\n    pass\n",
+        ref_inputs_init_src="",
+    )
+
+    assert "NVIDIA CUTLASS CuTe DSL" in task_description
+    assert "from cutlass.cute.runtime import from_dlpack" in task_description
+    # the detach gotcha we hardened against must be surfaced to the model
+    assert "detach()" in task_description

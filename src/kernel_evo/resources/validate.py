@@ -202,7 +202,7 @@ def run_local_validation(
     if not torch.cuda.is_available():
         raise ValueError("CUDA is not available")
 
-    backend = str(cfg.get("backend", "triton"))  # supported: triton, cuda_inline only
+    backend = str(cfg.get("backend", "triton"))  # supported: triton, cuda_inline, cute
     precision_str = str(cfg.get("precision", "fp32"))
     runtime_precision_str = resolve_runtime_precision_string(
         precision_str,

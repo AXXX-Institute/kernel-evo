@@ -76,11 +76,19 @@ def build_task_description_for_backend(
     ref_inputs_init_src: str,
 ) -> str:
     from kernel_evo.core.code.cuda_backend_utils import build_task_description_cuda_inline, is_cuda_inline_backend
+    from kernel_evo.core.code.cute_backend_utils import build_task_description_cute, is_cute_backend
     from kernel_evo.core.code.python_backend_utils import build_task_description_python
 
     backend = str(run_cfg.get("backend", "")).lower().strip()
     if is_cuda_inline_backend(backend):
         return build_task_description_cuda_inline(
+            run_cfg=run_cfg,
+            ref_arch_src=ref_arch_src,
+            ref_model_class_src=ref_model_class_src,
+            ref_inputs_init_src=ref_inputs_init_src,
+        )
+    if is_cute_backend(backend):
+        return build_task_description_cute(
             run_cfg=run_cfg,
             ref_arch_src=ref_arch_src,
             ref_model_class_src=ref_model_class_src,
@@ -148,11 +156,11 @@ def run_evolve(args: Any) -> None:
     if str(args.backend).lower() not in _py_utils.PYTHON_BACKENDS:
         raise ValueError(
             "Unsupported backend: "
-            f"{args.backend}. Only triton and cuda_inline are supported; "
+            f"{args.backend}. Only triton, cuda_inline and cute are supported; "
             "cpp/cuda/torch are not variants."
         )
 
-    codegen_kind = "python"  # only triton and cuda_inline are supported
+    codegen_kind = "python"  # only triton, cuda_inline and cute are supported
 
     model_src, inputs_src = split_kernelbench_ref(ref_arch_src)
 
@@ -257,6 +265,7 @@ def run_evolve(args: Any) -> None:
 
     # Write the initial prompt shown to the mutation LLM (ALL context included here).
     # cuda_inline and future backends may use a separate prompt directory.
+    from kernel_evo.core.code.cute_backend_utils import build_cute_seed, is_cute_backend
     from kernel_evo.core.code.python_backend_utils import model_to_modelnew
 
     task_text = build_task_description_for_backend(
@@ -271,7 +280,12 @@ def run_evolve(args: Any) -> None:
         task_text,
         encoding="utf-8",
     )
-    seed_program_code = model_to_modelnew(model_src)
+    # For cute, seed with a *compliant working* CuTe program (torch compute + verified CuTe identity
+    # passthrough) so evolution starts from working CuTe code instead of authoring it from scratch.
+    if is_cute_backend(str(args.backend)):
+        seed_program_code = build_cute_seed(model_src)
+    else:
+        seed_program_code = model_to_modelnew(model_src)
 
     # Generate per-problem seed.py (direct python code; no entrypoint)
     _write_initial_seed(

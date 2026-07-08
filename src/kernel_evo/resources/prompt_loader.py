@@ -28,6 +28,7 @@ BACKENDS_SUBDIR = "backends"
 BACKEND_PROMPT_OVERRIDE_DIRS: dict[str, str | None] = {
     "triton": None,  # use default only
     "cuda_inline": "backends/cuda_inline",  # e.g. mutation/ overrides default mutation
+    "cute": "backends/cute",  # CuTe DSL mutation prompt override
 }
 
 

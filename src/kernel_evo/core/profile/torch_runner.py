@@ -148,6 +148,10 @@ def run_torch_profile(
             from kernel_evo.core.code.cuda_backend_utils import apply_cuda_build_env
 
             apply_cuda_build_env(run_config)
+        elif backend.lower() == "cute":
+            from kernel_evo.core.code.cute_backend_utils import apply_cute_build_env
+
+            apply_cute_build_env(run_config)
         ModelNew, temp_file = load_custom_model_with_tempfile(custom_model_src, entry_point="ModelNew")
         with torch.no_grad():
             set_seed(seed_num)

@@ -118,7 +118,7 @@ def setup_parser(subparsers: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--backend",
         default="triton",
-        choices=["triton", "cuda_inline"],
+        choices=["triton", "cuda_inline", "cute"],
         help="Supported backends only.",
     )
     parser.add_argument("--precision", default="fp32", choices=list(VALID_PRECISIONS))

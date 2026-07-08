@@ -27,14 +27,14 @@ def setup_parser(subparsers: argparse._SubParsersAction) -> None:
     parser.add_argument(
         "--backend",
         default="triton",
-        choices=["triton", "cuda_inline"],
+        choices=["triton", "cuda_inline", "cute"],
         help="Supported backends only; cpp/cuda/torch are not variants.",
     )
     parser.add_argument(
         "--codegen-kind",
         default="auto",
         choices=["auto", "python"],
-        help="Program template: auto = python (only triton and cuda_inline are supported).",
+        help="Program template: auto = python (only triton, cuda_inline and cute are supported).",
     )
     parser.add_argument("--precision", default="fp32", choices=list(VALID_PRECISIONS))
     parser.add_argument(
